@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { openDb } from '../../src/db/index.js';
 import { RepoRegistry } from '../../src/registry.js';
 import { Indexer } from '../../src/indexer/indexer.js';
+import { InMemoryGraph } from '../../src/graph/in-memory-graph.js';
 
 describe('McpServer', () => {
   it('can be instantiated without throwing', async () => {
@@ -9,7 +10,8 @@ describe('McpServer', () => {
     const db = openDb(':memory:');
     const registry = new RepoRegistry(db);
     const indexer = new Indexer(db);
-    expect(() => new McpServer({ db, registry, indexer, aiConfig: null })).not.toThrow();
+    const graph = new InMemoryGraph(db);
+    expect(() => new McpServer({ db, registry, indexer, aiConfig: null, graph, repoId: '' })).not.toThrow();
     db.close();
   });
 
@@ -26,6 +28,8 @@ describe('McpServer', () => {
     expect(TOOL_NAMES).toContain('explain_symbol');
     expect(TOOL_NAMES).toContain('get_repo_stats');
     expect(TOOL_NAMES).toContain('remove_repo');
-    expect(TOOL_NAMES).toHaveLength(11);
+    expect(TOOL_NAMES).toContain('get_symbol_context');
+    expect(TOOL_NAMES).toContain('get_import_chain');
+    expect(TOOL_NAMES).toHaveLength(13);
   });
 });

@@ -15,6 +15,8 @@ import {
   ExplainSymbolSchema,
   GetRepoStatsSchema,
   RemoveRepoSchema,
+  GetSymbolContextSchema,
+  GetImportChainSchema,
 } from '../tool-schemas.js';
 import { searchSymbols } from './search-symbols.js';
 import { getSymbolDetail } from './get-symbol-detail.js';
@@ -27,6 +29,8 @@ import { getFileSymbols } from './get-file-symbols.js';
 import { explainSymbol } from './explain-symbol.js';
 import { getRepoStats } from './get-repo-stats.js';
 import { removeRepo } from './remove-repo.js';
+import { getSymbolContext } from './get-symbol-context.js';
+import { getImportChain } from './get-import-chain.js';
 import { createAiAdapter } from '../ai-adapter.js';
 import { isAppError } from '../../errors.js';
 
@@ -39,7 +43,8 @@ type JsonSchema = {
 const TOOL_DEFINITIONS: Array<{ name: string; description: string; inputSchema: JsonSchema }> = [
   {
     name: 'search_symbols',
-    description: 'Search for code symbols using FTS5 (with LIKE fallback).',
+    description:
+      'Fuzzy/FTS5 search for symbols by keyword or partial name. Returns multiple ranked matches. Use when you do NOT know the exact name; use find_references for exact lookup.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -53,7 +58,8 @@ const TOOL_DEFINITIONS: Array<{ name: string; description: string; inputSchema: 
   },
   {
     name: 'get_symbol_detail',
-    description: 'Get details of a symbol by ID.',
+    description:
+      'Metadata-only lookup by symbol UUID: file path, line range, signature, kind. Does NOT include callers/callees (use get_symbol_context for graph). Does NOT call AI (use explain_symbol for AI summary).',
     inputSchema: {
       type: 'object',
       properties: { symbol_id: { type: 'string' } },
@@ -89,7 +95,8 @@ const TOOL_DEFINITIONS: Array<{ name: string; description: string; inputSchema: 
   },
   {
     name: 'find_references',
-    description: 'Find all occurrences of a symbol name across indexed repos.',
+    description:
+      'Exact-name lookup: returns every location where this exact symbol name appears (definitions + uses). Use search_symbols for fuzzy/keyword search.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -126,7 +133,8 @@ const TOOL_DEFINITIONS: Array<{ name: string; description: string; inputSchema: 
   },
   {
     name: 'explain_symbol',
-    description: 'Get an explanation of a symbol (AI-enhanced when AI_API_KEY is configured).',
+    description:
+      'AI-generated natural-language explanation of a symbol. Requires AI_API_KEY env var (local LLM via OpenAI-compatible API); falls back to raw metadata if not configured. Prefer get_symbol_detail for pure metadata.',
     inputSchema: {
       type: 'object',
       properties: { symbol_id: { type: 'string' } },
@@ -149,6 +157,31 @@ const TOOL_DEFINITIONS: Array<{ name: string; description: string; inputSchema: 
       type: 'object',
       properties: { repo_id: { type: 'string' } },
       required: ['repo_id'],
+    },
+  },
+  {
+    name: 'get_symbol_context',
+    description:
+      'Graph view of a symbol: who calls it (callers, incoming) and what it calls (callees, outgoing), up to BFS depth 3. Use depth=1 for direct only. Response includes blastRadius = callers.length (who breaks if you change this) and impactCount = callers+callees total.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        symbol_name: { type: 'string' },
+        depth: { type: 'integer', minimum: 1, maximum: 3, default: 2 },
+      },
+      required: ['symbol_name'],
+    },
+  },
+  {
+    name: 'get_import_chain',
+    description: 'Get the import dependency chain starting from a file (IMPORTS edges, BFS).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        file_path: { type: 'string' },
+        depth: { type: 'integer', minimum: 1, maximum: 5, default: 3 },
+      },
+      required: ['file_path'],
     },
   },
 ];
@@ -234,6 +267,18 @@ export function registerToolHandlers(server: McpSdkServer, opts: McpServerOption
           const p = RemoveRepoSchema.parse(args);
           removeRepo(opts.registry, p.repo_id);
           return { content: [{ type: 'text', text: `Repo ${p.repo_id} removed.` }] };
+        }
+        case 'get_symbol_context': {
+          const p = GetSymbolContextSchema.parse(args);
+          const result = getSymbolContext(opts.db, opts.graph, opts.repoId, p.symbol_name, p.depth);
+          if (!result) return { content: [{ type: 'text', text: `Symbol not found: ${p.symbol_name}` }], isError: true };
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        }
+        case 'get_import_chain': {
+          const p = GetImportChainSchema.parse(args);
+          const result = getImportChain(opts.db, opts.graph, opts.repoId, p.file_path, p.depth);
+          if (!result) return { content: [{ type: 'text', text: `File not found: ${p.file_path}` }], isError: true };
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
         }
         default:
           return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };

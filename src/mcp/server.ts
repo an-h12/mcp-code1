@@ -5,6 +5,8 @@ import type { Indexer } from '../indexer/indexer.js';
 import { registerToolHandlers } from './tools/index.js';
 import { registerResourceHandlers } from './resources/index.js';
 import type { AiConfig } from './ai-adapter.js';
+import type { InMemoryGraph } from '../graph/in-memory-graph.js';
+
 
 export const TOOL_NAMES = [
   'search_symbols',
@@ -18,6 +20,8 @@ export const TOOL_NAMES = [
   'explain_symbol',
   'get_repo_stats',
   'remove_repo',
+  'get_symbol_context',
+  'get_import_chain',
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -27,6 +31,8 @@ export type McpServerOptions = {
   registry: RepoRegistry;
   indexer: Indexer;
   aiConfig: AiConfig | null;
+  graph: InMemoryGraph;
+  repoId: string;
 };
 
 export class McpServer {

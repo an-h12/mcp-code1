@@ -1,43 +1,97 @@
+import { existsSync, mkdirSync } from 'node:fs';
+import path from 'node:path';
 import { loadConfig, type Config } from './config.js';
 import { createLogger, type Logger } from './logger.js';
 import { DbPool } from './db/pool.js';
+import type { Db } from './db/index.js';
 import { RepoRegistry } from './registry.js';
 import { Indexer } from './indexer/indexer.js';
 import { Watcher } from './watcher/watcher.js';
 import { McpServer } from './mcp/server.js';
 import type { AiConfig } from './mcp/ai-adapter.js';
+import { InMemoryGraph } from './graph/in-memory-graph.js';
+import { ensureRepo } from './db/repo-registry.js';
 
 export class App {
   readonly config: Config;
   readonly log: Logger;
   readonly pool: DbPool;
+  readonly db: Db;
   readonly registry: RepoRegistry;
   readonly indexer: Indexer;
   readonly watcher: Watcher;
+  readonly graph: InMemoryGraph;
+  repoId: string = '';
   private mcpServer: McpServer | null = null;
 
   constructor() {
     this.config = loadConfig();
     this.log = createLogger(this.config.logLevel);
-    this.pool = new DbPool(this.config.dbPath);
-    const db = this.pool.acquire();
-    this.registry = new RepoRegistry(db);
-    this.indexer = new Indexer(db);
+
+    // Resolve REPO_ROOT (single-repo model)
+    const repoRoot = process.env['REPO_ROOT']
+      ? path.resolve(process.env['REPO_ROOT'])
+      : process.cwd();
+
+    if (!existsSync(repoRoot)) {
+      this.log.fatal({ repoRoot }, 'REPO_ROOT does not exist — check your Cline MCP config');
+      process.exit(1);
+    }
+
+    const dbPath = this.config.dbPath;
+    mkdirSync(path.dirname(dbPath), { recursive: true });
+
+    this.pool = new DbPool(dbPath);
+    this.db = this.pool.acquire();
+    this.registry = new RepoRegistry(this.db);
+    this.indexer = new Indexer(this.db);
     this.watcher = new Watcher({ debounceMs: 300 });
+    this.graph = new InMemoryGraph(this.db);
+
+    this.repoId = ensureRepo(this.db, repoRoot);
   }
 
   async start(): Promise<void> {
-    this.log.info({ dbPath: this.config.dbPath }, 'App starting');
+    this.log.info({ dbPath: this.config.dbPath, repoId: this.repoId }, 'App starting');
 
-    for (const repo of this.registry.list()) {
-      this.log.info({ repo: repo.name }, 'Starting initial index');
-      await this.indexer.indexRepo(repo.id, repo.rootPath);
-      await this.watcher.watch(repo.rootPath);
-      this.watcher.on('change', (path: string) => {
-        this.log.debug({ path }, 'File changed; re-indexing repo');
-        void this.indexer.indexRepo(repo.id, repo.rootPath);
+    this.graph.startEviction();
+
+    const repoRoot = process.env['REPO_ROOT']
+      ? path.resolve(process.env['REPO_ROOT'])
+      : process.cwd();
+
+    this.graph.setScanInProgress(this.repoId, true);
+
+    this.indexer
+      .indexRepo(this.repoId, repoRoot)
+      .then(() => {
+        this.graph.setScanInProgress(this.repoId, false);
+        this.graph.invalidate(this.repoId);
+        this.log.info({ repoId: this.repoId }, 'Initial index complete — graph ready');
+      })
+      .catch((err: unknown) => {
+        this.graph.setScanInProgress(this.repoId, false);
+        this.log.error({ err, repoId: this.repoId }, 'runFullScan failed — retrying in 60s');
+        setTimeout(() => {
+          this.graph.setScanInProgress(this.repoId, true);
+          this.indexer
+            .indexRepo(this.repoId, repoRoot)
+            .then(() => {
+              this.graph.setScanInProgress(this.repoId, false);
+              this.graph.invalidate(this.repoId);
+            })
+            .catch((e: unknown) => {
+              this.graph.setScanInProgress(this.repoId, false);
+              this.log.error({ e }, 'runFullScan retry also failed — restart server to recover');
+            });
+        }, 60_000);
       });
-    }
+
+    await this.watcher.watch(repoRoot);
+    this.watcher.on('change', (filePath: string) => {
+      this.log.debug({ filePath }, 'File changed — re-indexing');
+      void this.indexer.indexRepo(this.repoId, repoRoot);
+    });
 
     const aiConfig: AiConfig | null = this.config.aiApiKey
       ? {
@@ -48,10 +102,12 @@ export class App {
       : null;
 
     this.mcpServer = new McpServer({
-      db: this.pool.acquire(),
+      db: this.db,
       registry: this.registry,
       indexer: this.indexer,
       aiConfig,
+      graph: this.graph,
+      repoId: this.repoId,
     });
 
     await this.mcpServer.connectStdio();
@@ -60,11 +116,13 @@ export class App {
 
   async stop(): Promise<void> {
     this.log.info('App stopping');
+    this.graph.stopEviction();
     await this.watcher.close();
     if (this.mcpServer) {
       await this.mcpServer.close();
       this.mcpServer = null;
     }
+    this.pool.release();
     this.pool.close();
   }
 }
