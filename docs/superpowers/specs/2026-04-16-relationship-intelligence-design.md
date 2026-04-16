@@ -331,6 +331,27 @@ Tier 2 is optional but strongly recommended. The system falls back to Tier 1 aut
 | Conditional compilation | `#if` blocks not evaluated | Accepted |
 | Dynamic dispatch | Runtime polymorphism | Accepted — static analysis only |
 
+### C# ignore patterns (EC-4.3)
+
+The following paths **must** be excluded from indexing for C# projects. They are the C# equivalents of `node_modules/` — indexing them would take hours and flood the graph with framework symbols:
+
+```typescript
+// Add to IGNORE_PATTERNS (from Plan 2 indexer config)
+const CSHARP_IGNORE_PATTERNS = [
+  '**/obj/**',           // MSBuild output (generated .cs files)
+  '**/bin/**',           // compiled output
+  '**/packages/**',      // NuGet packages (legacy non-SDK projects)
+  '**/.vs/**',           // Visual Studio metadata
+  '**/*.Designer.cs',    // WinForms/WPF generated UI code (EC-4.2)
+  '**/*.g.cs',           // Roslyn source generators
+  '**/*.generated.cs',   // code generators (EF, gRPC, etc.)
+  '**/AssemblyInfo.cs',  // assembly metadata
+  '**/GlobalUsings.g.cs',
+];
+```
+
+These patterns are applied in the Watcher and in `runFullScan` before any file is passed to the indexer.
+
 ### Roslyn daemon
 
 **Binary distribution**: Pre-built self-contained binaries committed directly to git, no installation required for end users.
@@ -406,6 +427,72 @@ function getRoslynBinaryPath(): string | null {
 ```
 
 Communication: JSON over stdin/stdout. The daemon is a long-running subprocess; the bridge reuses it via a persistent child process handle.
+
+**EC-4.4 FIX — Daemon crash recovery:**
+
+```typescript
+// src/analyzers/roslyn-bridge.ts
+
+export class RoslynBridge {
+  private daemon: ChildProcess | null = null;
+  private readonly TIMEOUT_MS = 30_000;
+
+  private ensureDaemon(): ChildProcess {
+    if (this.daemon && !this.daemon.killed) return this.daemon;
+
+    const binPath = getRoslynBinaryPath();
+    if (!binPath) return null;  // fall back to Tier 1
+
+    this.daemon = spawn(binPath, [], { stdio: ['pipe', 'pipe', 'pipe'] });
+
+    // Pipe stderr to server logger for diagnostics
+    this.daemon.stderr!.on('data', d =>
+      logger.warn({ roslyn: 'stderr' }, d.toString())
+    );
+
+    // On unexpected exit: clear handle so next call respawns
+    this.daemon.on('exit', (code) => {
+      logger.warn({ code }, 'Roslyn daemon exited — will respawn on next request');
+      this.daemon = null;
+    });
+
+    // Cleanup on server exit (EC-1.2): prevent orphaned processes
+    process.on('exit', () => this.daemon?.kill());
+    process.on('SIGTERM', () => { this.daemon?.kill(); process.exit(0); });
+
+    return this.daemon;
+  }
+
+  async analyze(req: RoslynRequest): Promise<RoslynResponse | null> {
+    const daemon = this.ensureDaemon();
+    if (!daemon) return null;  // Tier 1 fallback
+
+    return Promise.race([
+      this.sendRequest(daemon, req),
+      new Promise<null>((_, reject) =>
+        setTimeout(() => reject(new Error('Roslyn timeout')), this.TIMEOUT_MS)
+      ),
+    ]).catch(err => {
+      logger.warn({ err }, 'Roslyn analysis failed — falling back to Tier 1');
+      this.daemon?.kill();
+      this.daemon = null;
+      return null;  // Tier 1 fallback
+    });
+  }
+}
+```
+
+**Roslyn binary missing — startup log (EC-4.5):**
+```typescript
+// In getRoslynBinaryPath(), after returning null:
+if (!binaryPath) {
+  logger.warn(
+    { platform: process.platform, arch: process.arch },
+    'Roslyn binary not found — C# analysis will use tree-sitter Tier 1 (~75-80% accuracy). ' +
+    'Run scripts/build-roslyn.sh to build for your platform.'
+  );
+}
+```
 
 ---
 
@@ -626,16 +713,25 @@ Indexer.indexFile(filePath)
 ### RelationExtractor (`src/indexer/relation-extractor.ts`)
 
 Key behaviors:
-- **Deletes stale relations before inserting new ones** (prevents duplicates on file change). Because `symbol_relations` has no `source_file` column, the delete requires a subquery joining through `symbols`:
-  ```sql
-  DELETE FROM symbol_relations
-  WHERE source_id IN (
-    SELECT id FROM symbols WHERE file_path = ? AND repo_id = ?
-  )
+- **DELETE + INSERT are wrapped in a single `db.transaction()`** — they are atomic. A crash between delete and insert is impossible; SQLite WAL rolls back the entire transaction on next open. This is the fix for EC-1.1.
+  ```typescript
+  const upsertRelations = db.transaction((filePath: string, edges: EdgeRow[]) => {
+    // DELETE inside the same transaction as INSERT
+    db.prepare(`
+      DELETE FROM symbol_relations
+      WHERE source_id IN (
+        SELECT id FROM symbols WHERE file_path = ? AND repo_id = ?
+      )
+    `).run(filePath, app.repoId);
+
+    for (const edge of edges) insertStmt.run(edge);
+  });
+  upsertRelations(filePath, edges);  // atomic — all or nothing
   ```
   `RelationExtractor` therefore needs access to both `symbols` and `symbol_relations` tables.
-- Uses `db.transaction()` (better-sqlite3 sync API) for atomic bulk insert
 - Sets `confidence=1.0` for resolved edges, `confidence=0.7` for unresolved (target_id NULL)
+- **Per-file edge cap**: if `edges.length > 10_000`, log a warning and truncate to 10_000. This prevents minified/generated files from flooding the DB (EC-3.1).
+- **Extension guard**: return early if `path.extname(filePath)` is not in `['.ts', '.tsx', '.js', '.jsx', '.py', '.go', '.rs', '.cs', '.mjs', '.cjs']`. Prevents binary files from reaching tree-sitter (EC-3.2).
 
 ### ModuleMap (`src/indexer/module-map.ts`)
 
@@ -817,15 +913,31 @@ For a typical internal deployment with one active repo: **~30–50 MB RAM** — 
 
 ### File change handling (no memory leak)
 
+**Debounce (EC-3.4):** Chokidar events are debounced 300ms per file before triggering `indexFile`. If a file fires 20 change events in 100ms (hot-reload, format-on-save), only the last event triggers indexing. This prevents duplicate edges from concurrent `reloadFile` calls.
+
+```typescript
+// src/indexer/watcher.ts
+const debounceMap = new Map<string, NodeJS.Timeout>();
+
+watcher.on('change', (filePath) => {
+  clearTimeout(debounceMap.get(filePath));
+  debounceMap.set(filePath, setTimeout(() => {
+    debounceMap.delete(filePath);
+    indexer.indexFile(filePath);          // Pass 1 + Pass 2 + reloadFile
+  }, 300));
+});
+```
+
 ```
 Developer edits file A.cs
-  → chokidar detects change
-  → Indexer.indexFile('A.cs')
-       Pass 1: re-extract symbols
-       Pass 2: DELETE old relations, INSERT new ones
-  → InMemoryGraph.reloadFile(repoId, fileId)  // 2 arguments required
-       remove old outgoing edges for symbols in A
-       rebuild incoming edges affected
+  → chokidar detects change (debounced 300ms)
+  → Indexer.indexFile('A.cs')           ← single call after debounce
+       Pass 1: re-extract symbols (DELETE + INSERT symbols in one tx)
+       Pass 2: DELETE + INSERT relations in same tx  ← EC-1.1 fix
+  → InMemoryGraph.reloadFile(repoId, fileId)
+       remove old outgoing + prune incoming
+       prune ghost nodes for deleted symbols  ← EC-5.1 fix
+       re-add fresh edges from DB
        RAM stays stable — no accumulation over time ✅
 ```
 
@@ -837,33 +949,60 @@ reloadFile(repoId: string, fileId: string): void {
   if (!graph) return;  // graph not loaded — nothing to do, next getGraph() will load fresh
 
   // 1. Find all IntIds belonging to this file
-  //    (stored in a fileId→IntId[] index maintained during loadFromDb)
   const affectedIntIds = graph.fileIndex.get(fileId) ?? [];
 
-  // 2. For each affected symbol: collect its current outgoing targets
+  // 2. Collect stale outgoing targets, then clear outgoing
   const staleTgtIds = new Set<IntId>();
   for (const intId of affectedIntIds) {
     const node = graph.nodes.get(intId);
     if (!node) continue;
     node.outgoing.forEach(e => staleTgtIds.add(e.targetId));
-    node.outgoing = [];   // clear outgoing
+    node.outgoing = [];
   }
 
   // 3. Remove stale incoming edges from all targets
   for (const tgtId of staleTgtIds) {
     const tgtNode = graph.nodes.get(tgtId);
     if (!tgtNode) continue;
-    tgtNode.incoming = tgtNode.incoming.filter(e => !affectedIntIds.includes(e.targetId));
+    tgtNode.incoming = tgtNode.incoming.filter(
+      e => !affectedIntIds.includes(e.targetId)
+    );
   }
 
-  // 4. Re-load fresh edges from DB for these symbols
-  const uuids = affectedIntIds.map(id => graph.mapper.resolve(id));
-  const freshRows = this.db.prepare(`
-    SELECT source_id, target_id, type, confidence
-    FROM symbol_relations
-    WHERE source_id IN (${uuids.map(() => '?').join(',')})
-      AND target_id IS NOT NULL
-  `).all(...uuids);
+  // EC-5.1 FIX: Prune ghost nodes for symbols deleted/renamed in this file.
+  // Check which affectedIntIds no longer have a corresponding symbol in DB.
+  const affectedUuids = affectedIntIds.map(id => graph.mapper.resolve(id));
+  const CHUNK = 500;
+  const stillExistingUuids = new Set<string>();
+  for (let i = 0; i < affectedUuids.length; i += CHUNK) {
+    const batch = affectedUuids.slice(i, i + CHUNK);
+    const rows = this.db.prepare(
+      `SELECT id FROM symbols WHERE id IN (${batch.map(() => '?').join(',')})`
+    ).all(...batch) as Array<{ id: string }>;
+    rows.forEach(r => stillExistingUuids.add(r.id));
+  }
+  for (const [intId, uuid] of affectedIntIds.map((id, i) => [id, affectedUuids[i]] as [IntId, string])) {
+    if (!stillExistingUuids.has(uuid)) {
+      graph.nodes.delete(intId);          // remove ghost node
+      graph.fileIndex.get(fileId)?.splice(
+        graph.fileIndex.get(fileId)!.indexOf(intId), 1
+      );
+    }
+  }
+
+  // 4. Re-load fresh edges from DB — chunked to avoid SQLite variable limit (EC-3.1)
+  const survivingUuids = [...stillExistingUuids];
+  const freshRows: any[] = [];
+  for (let i = 0; i < survivingUuids.length; i += CHUNK) {
+    const batch = survivingUuids.slice(i, i + CHUNK);
+    const rows = this.db.prepare(`
+      SELECT source_id, target_id, type, confidence
+      FROM symbol_relations
+      WHERE source_id IN (${batch.map(() => '?').join(',')})
+        AND target_id IS NOT NULL
+    `).all(...batch);
+    freshRows.push(...rows);
+  }
 
   for (const row of freshRows) {
     const srcInt = graph.mapper.intern(row.source_id);
@@ -875,7 +1014,9 @@ reloadFile(repoId: string, fileId: string): void {
 }
 ```
 
-`graph.fileIndex` is a `Map<string, IntId[]>` (fileId → list of integer IDs for symbols in that file) built during `loadFromDb` and updated during `reloadFile`.
+**Thread safety note:** Node.js is single-threaded and `better-sqlite3` calls are synchronous. `reloadFile` contains no `await` points — it is naturally atomic within the event loop. Two rapid change events for the same file are serialized; the debounce (300ms) ensures only one actually runs.
+
+**`CHUNK = 500`** caps all `IN (?)` queries to 500 placeholders — well below SQLite's `SQLITE_MAX_VARIABLE_NUMBER` default of 32766, and safe for large files (EC-3.1).
 
 ---
 
@@ -908,20 +1049,54 @@ At startup, the server reads `REPO_ROOT` from environment (set by Cline config) 
 ```typescript
 // src/app.ts — server startup
 
+import { existsSync, mkdirSync } from 'fs';
+import path from 'path';
+
 const REPO_ROOT = process.env.REPO_ROOT
   ? path.resolve(process.env.REPO_ROOT)
   : process.cwd();
 
+// EC-6.1 FIX: Fail fast with clear error if REPO_ROOT doesn't exist
+if (!existsSync(REPO_ROOT)) {
+  logger.fatal({ REPO_ROOT }, 'REPO_ROOT does not exist — check your Cline MCP config');
+  process.exit(1);
+}
+
 const DB_PATH = process.env.DB_PATH
   ?? path.join(__dirname, '..', 'data', `${slugify(REPO_ROOT)}.db`);
 
-// Auto-register this repo on first run
-const repoId = await repoRegistry.ensureRepo(REPO_ROOT);
+// EC-6.2 FIX: Ensure DB directory exists before opening (fresh clone / first run)
+mkdirSync(path.dirname(DB_PATH), { recursive: true });
+
+// Run migrations, then register repo — MCP transport starts AFTER this block
+// EC-1.3 FIX: Server does not accept connections until repoId is resolved
+await runMigrations(DB_PATH);
+const repoId = ensureRepo(db, REPO_ROOT);  // synchronous (better-sqlite3)
+
+// EC-6.4 FIX: Trigger initial index scan, then invalidate graph cache when done.
+// On first run, DB is empty — tools return [] until indexing finishes.
+// After indexing, the empty cached graph is invalidated so next request loads fresh data.
+indexer.runFullScan(REPO_ROOT).then(() => {
+  graph.invalidate(repoId);  // evict any cached (empty) graph → next getGraph() loads real data
+  logger.info({ repoId }, 'Initial index complete — graph ready');
+});
 
 // repoId is a module-level constant for this process lifetime
-// All tools, ContextEnricher, and InMemoryGraph use it directly
-// No repoId parameter needed in any tool call
 app.repoId = repoId;
+
+// NOW start the MCP transport — repoId is guaranteed to be set
+startMcpTransport();
+```
+
+**Startup sequencing rule:** `startMcpTransport()` is called **after** `ensureRepo` and migrations complete. Tools cannot be called before `app.repoId` is set (EC-1.3).
+
+**`InMemoryGraph.invalidate(repoId)`** implementation:
+```typescript
+invalidate(repoId: string): void {
+  this.graphs.delete(repoId);
+  this.lastAccess.delete(repoId);
+  // Next call to getGraph(repoId) triggers a fresh loadFromDb()
+}
 ```
 
 `ensureRepo` inserts a row into `repos` if not already present, using the hash of `REPO_ROOT` as the stable ID across restarts.
@@ -949,7 +1124,10 @@ import { createHash } from 'crypto';
 import { basename } from 'path';
 
 export function ensureRepo(db: Database, rootPath: string): string {
-  // Normalize path: resolve symlinks, lowercase on Windows
+  // EC-6.5 FIX: Normalize path before hashing AND before storing.
+  // Converts backslashes to forward slashes and lowercases the entire path.
+  // This ensures E:\Projects\App and e:/projects/app produce the same repoId
+  // and the same root_path in DB — preventing duplicate repo rows on Windows.
   const normalized = rootPath.replace(/\\/g, '/').toLowerCase();
 
   // Stable ID: first 16 chars of SHA-256(normalized path)
@@ -959,7 +1137,7 @@ export function ensureRepo(db: Database, rootPath: string): string {
     INSERT INTO repos (id, name, root_path)
     VALUES (?, ?, ?)
     ON CONFLICT(id) DO UPDATE SET last_seen = datetime('now')
-  `).run(repoId, basename(rootPath), rootPath);
+  `).run(repoId, basename(rootPath), normalized);  // store normalized path, not raw rootPath
 
   return repoId;
 }
