@@ -12,17 +12,7 @@
   function: [(identifier) @call.name
              (member_expression property: (property_identifier) @call.name)]) @call
 
-; class extends: class A extends B
+; class extends: class A extends B  (JS: class_heritage wraps identifier directly)
 (class_declaration
-  name: (type_identifier) @class.name
+  name: (identifier) @class.name
   (class_heritage (identifier) @extends.name)) @class.extends
-
-; interface extends (TypeScript): interface A extends B, C
-(interface_declaration
-  name: (type_identifier) @interface.name
-  (extends_type_clause (type_identifier) @extends.name)) @interface.extends
-
-; implements (TypeScript): class A implements B, C
-(class_declaration
-  name: (type_identifier) @class.name
-  (implements_clause (type_identifier) @implements.name)) @class.implements
