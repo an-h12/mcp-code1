@@ -444,16 +444,19 @@ private sendRequest(daemon: ChildProcess, req: RoslynRequest): Promise<RoslynRes
   return new Promise((resolve, reject) => {
     let buffer = '';
 
+    const cleanup = () => {
+      daemon.stdout!.off('data', onData);
+      daemon.stdout!.off('error', onError);
+      daemon.stdout!.off('close', onClose);
+    };
+
     const onData = (chunk: Buffer) => {
       buffer += chunk.toString();
       const newlineIdx = buffer.indexOf('\n');
       if (newlineIdx === -1) return;  // incomplete line — wait for more data
 
       const line = buffer.slice(0, newlineIdx);
-      buffer = buffer.slice(newlineIdx + 1);  // consume the line
-
-      daemon.stdout!.off('data', onData);
-      daemon.stdout!.off('error', onError);
+      cleanup();
 
       try {
         resolve(JSON.parse(line) as RoslynResponse);
@@ -463,12 +466,20 @@ private sendRequest(daemon: ChildProcess, req: RoslynRequest): Promise<RoslynRes
     };
 
     const onError = (err: Error) => {
-      daemon.stdout!.off('data', onData);
+      cleanup();
       reject(err);
+    };
+
+    // N3 FIX: handle daemon stdout close before newline (daemon crashed mid-response).
+    // Without this, the Promise hangs until the 30s analyze() timeout fires.
+    const onClose = () => {
+      cleanup();
+      reject(new Error(`Roslyn daemon stdout closed before response (partial: ${buffer.slice(0, 100)})`));
     };
 
     daemon.stdout!.on('data', onData);
     daemon.stdout!.once('error', onError);
+    daemon.stdout!.once('close', onClose);
 
     // Write request as a single NDJSON line
     daemon.stdin!.write(JSON.stringify(req) + '\n');
@@ -586,9 +597,17 @@ export class ContextEnricher {
   async enrich(userMessage: string): Promise<EnrichedContext> {
     const mentions        = this.extractMentions(userMessage);
     const resolvedSymbols = await this.resolveSymbols(mentions);
-    const symbolContexts  = await Promise.all(
-      resolvedSymbols.map(s => this.fetchSymbolContext(s.id, s.repoId, 2))
-    );
+    // N2 FIX: fetchSymbolContext is synchronous — a throw from IdMapper.resolve()
+    // (e.g. race between graph load and symbol delete) propagates out of .map().
+    // Wrap each call individually so one bad symbol doesn't drop all context.
+    const symbolContexts: SymbolContext[] = [];
+    for (const s of resolvedSymbols) {
+      try {
+        symbolContexts.push(this.fetchSymbolContext(s.id, s.repoId, 2));
+      } catch (err) {
+        logger.warn({ err, symbolId: s.id }, 'fetchSymbolContext failed — skipping symbol');
+      }
+    }
     return this.assembleContext(symbolContexts, userMessage);
   }
 
@@ -623,7 +642,13 @@ export class ContextEnricher {
       // S11 FIX: The FTS virtual table must be defined with `content=symbols` so that
       // `fts.rowid` maps to `symbols.rowid` (the implicit integer rowid, NOT the UUID id).
       // The JOIN below uses `s.rowid = fts.rowid` — requires symbols_fts to be a
-      // content FTS5 table over the symbols table. Schema defined in migration 001.
+      // content FTS5 table over the symbols table.
+      // N4 FIX: Exact DDL required in migration 001 (src/db/migrations/001_initial.ts):
+      //   CREATE VIRTUAL TABLE symbols_fts USING fts5(
+      //     name, content=symbols, content_rowid=rowid
+      //   );
+      // Without content_rowid=rowid, fts.rowid is an independent auto-increment
+      // and the JOIN s.rowid = fts.rowid would return wrong rows.
       if (!row) {
         try {
           // Escape FTS5 string literal: replace " with "" inside the quoted value
@@ -1175,6 +1200,7 @@ At startup, the server reads `REPO_ROOT` from environment (set by Cline config) 
 
 import { existsSync, mkdirSync } from 'fs';
 import path from 'path';
+import { createHash } from 'crypto';  // N1 FIX: required for _repoSlug inline hash
 
 const REPO_ROOT = process.env.REPO_ROOT
   ? path.resolve(process.env.REPO_ROOT)
