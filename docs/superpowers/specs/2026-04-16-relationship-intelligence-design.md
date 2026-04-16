@@ -41,6 +41,11 @@ CREATE INDEX idx_relations_repo_type ON symbol_relations(repo_id, type);  -- com
 - **SQLite stores outgoing edges only** (A→B). Incoming edges (B←A) are computed at graph load time by reversing outgoing — one DB read gives two-direction traversal.
 - `target_id` is NULL when tree-sitter cannot resolve the target symbol at index time (e.g., external library calls). These rows are still stored with `confidence=0.7` for debugging but excluded from the in-memory graph.
 - Migration file: `src/db/migrations/002_relations.ts`
+- **M16 FIX — `PRAGMA foreign_keys = ON`**: SQLite disables FK enforcement by default. The migration runner must execute `PRAGMA foreign_keys = ON` on every new connection before any DML. Without this, `ON DELETE CASCADE` on `symbol_relations` is silently inert — deleting a repo would not cascade-delete its relations. Add this to the `DbPool.open()` connection setup:
+  ```typescript
+  db.pragma('foreign_keys = ON');
+  db.pragma('journal_mode = WAL');  // already required for concurrent reads
+  ```
 
 ---
 
@@ -55,7 +60,10 @@ type EdgeType = 'CALLS' | 'IMPORTS' | 'EXTENDS' | 'IMPLEMENTS';
 type IntId = number;
 
 type Edge = {
-  targetId: IntId;
+  targetId: IntId;    // ⚠️ naming note: in an *outgoing* list, targetId = destination;
+                      // in an *incoming* list (derived at load), targetId = source that points TO this node.
+                      // This dual meaning is intentional (single Edge type) but callers must be aware.
+                      // Direction is always clear from which list the edge lives in (node.outgoing vs node.incoming).
   type: EdgeType;
   confidence: number;
 };
@@ -397,7 +405,7 @@ type RoslynRelation = {
   targetName: string;
   targetFile: string | null;   // null for external symbols
   type: 'CALLS' | 'IMPORTS' | 'EXTENDS' | 'IMPLEMENTS';
-  confidence: 1.0;             // Roslyn always resolves — always 1.0
+  confidence: number;          // always 1.0 from Roslyn; use number not literal for forward compat
 };
 
 // When Roslyn detects partial class spread across multiple files,
@@ -427,6 +435,46 @@ function getRoslynBinaryPath(): string | null {
 ```
 
 Communication: JSON over stdin/stdout. The daemon is a long-running subprocess; the bridge reuses it via a persistent child process handle.
+
+**Framing protocol:** Newline-delimited JSON (NDJSON). Each request is one JSON line on stdin; each response is one JSON line on stdout. The bridge accumulates stdout chunks in a buffer and resolves the pending promise when a complete `\n`-terminated line arrives.
+
+```typescript
+// B5 FIX: sendRequest with NDJSON framing + partial-JSON crash guard
+private sendRequest(daemon: ChildProcess, req: RoslynRequest): Promise<RoslynResponse> {
+  return new Promise((resolve, reject) => {
+    let buffer = '';
+
+    const onData = (chunk: Buffer) => {
+      buffer += chunk.toString();
+      const newlineIdx = buffer.indexOf('\n');
+      if (newlineIdx === -1) return;  // incomplete line — wait for more data
+
+      const line = buffer.slice(0, newlineIdx);
+      buffer = buffer.slice(newlineIdx + 1);  // consume the line
+
+      daemon.stdout!.off('data', onData);
+      daemon.stdout!.off('error', onError);
+
+      try {
+        resolve(JSON.parse(line) as RoslynResponse);
+      } catch (e) {
+        reject(new Error(`Roslyn response JSON parse failed: ${e}. Raw: ${line.slice(0, 200)}`));
+      }
+    };
+
+    const onError = (err: Error) => {
+      daemon.stdout!.off('data', onData);
+      reject(err);
+    };
+
+    daemon.stdout!.on('data', onData);
+    daemon.stdout!.once('error', onError);
+
+    // Write request as a single NDJSON line
+    daemon.stdin!.write(JSON.stringify(req) + '\n');
+  });
+}
+```
 
 **EC-4.4 FIX — Daemon crash recovery:**
 
@@ -568,15 +616,28 @@ export class ContextEnricher {
          LIMIT 1`
       ).get(name, this.repoId);
 
-      // 2. FTS fuzzy fallback if no exact match
+      // 2. FTS fuzzy fallback if no exact match.
+      // B4 FIX: FTS5 MATCH treats +, -, *, ", (, ), ^ as operators — symbol names
+      // containing these chars cause a SqliteError. Wrap in try/catch and quote the
+      // search term as an FTS5 string literal to neutralize all operator characters.
+      // S11 FIX: The FTS virtual table must be defined with `content=symbols` so that
+      // `fts.rowid` maps to `symbols.rowid` (the implicit integer rowid, NOT the UUID id).
+      // The JOIN below uses `s.rowid = fts.rowid` — requires symbols_fts to be a
+      // content FTS5 table over the symbols table. Schema defined in migration 001.
       if (!row) {
-        row = this.db.prepare(
-          `SELECT s.id, s.name, s.file_path, s.kind, s.repo_id
-           FROM symbols_fts fts
-           JOIN symbols s ON s.id = fts.rowid
-           WHERE symbols_fts MATCH ? AND s.repo_id = ?
-           ORDER BY rank LIMIT 1`
-        ).get(name, this.repoId);
+        try {
+          // Escape FTS5 string literal: replace " with "" inside the quoted value
+          const safeName = `"${name.replace(/"/g, '""')}"`;
+          row = this.db.prepare(
+            `SELECT s.id, s.name, s.file_path, s.kind, s.repo_id
+             FROM symbols_fts fts
+             JOIN symbols s ON s.rowid = fts.rowid
+             WHERE symbols_fts MATCH ? AND s.repo_id = ?
+             ORDER BY rank LIMIT 1`
+          ).get(safeName, this.repoId);
+        } catch {
+          // FTS syntax error (e.g., malformed name) — skip fuzzy fallback, continue
+        }
       }
 
       if (row) results.push({ id: row.id, name: row.name, filePath: row.file_path, repoId: row.repo_id });
@@ -626,14 +687,22 @@ export class ContextEnricher {
     };
   }
 
-  // Batch fetch symbol metadata to avoid N+1 queries in BFS results
+  // Batch fetch symbol metadata to avoid N+1 queries in BFS results.
+  // B2 FIX: Chunk queries to 500 to avoid both SQLite SQLITE_MAX_VARIABLE_NUMBER
+  // and JS call-stack argument limit from the spread operator on large BFS result sets.
   private batchFetchNames(uuids: string[]): Map<string, { name: string; kind: string; filePath: string }> {
     if (uuids.length === 0) return new Map();
-    const placeholders = uuids.map(() => '?').join(',');
-    const rows = this.db.prepare(
-      `SELECT id, name, kind, file_path FROM symbols WHERE id IN (${placeholders})`
-    ).all(...uuids) as Array<{ id: string; name: string; kind: string; file_path: string }>;
-    return new Map(rows.map(r => [r.id, { name: r.name, kind: r.kind, filePath: r.file_path }]));
+    const CHUNK = 500;
+    const result = new Map<string, { name: string; kind: string; filePath: string }>();
+    for (let i = 0; i < uuids.length; i += CHUNK) {
+      const batch = uuids.slice(i, i + CHUNK);
+      const placeholders = batch.map(() => '?').join(',');
+      const rows = this.db.prepare(
+        `SELECT id, name, kind, file_path FROM symbols WHERE id IN (${placeholders})`
+      ).all(...batch) as Array<{ id: string; name: string; kind: string; file_path: string }>;
+      rows.forEach(r => result.set(r.id, { name: r.name, kind: r.kind, filePath: r.file_path }));
+    }
+    return result;
   }
 
   assembleContext(symbolContexts: SymbolContext[], userMessage: string): EnrichedContext {
@@ -743,6 +812,25 @@ Key behaviors:
 - Sets `confidence=1.0` for resolved edges, `confidence=0.7` for unresolved (target_id NULL)
 - **Per-file edge cap**: if `edges.length > 10_000`, log a warning and truncate to 10_000. This prevents minified/generated files from flooding the DB (EC-3.1).
 - **Extension guard**: return early if `path.extname(filePath)` is not in `['.ts', '.tsx', '.js', '.jsx', '.py', '.go', '.rs', '.cs', '.mjs', '.cjs']`. Prevents binary files from reaching tree-sitter (EC-3.2).
+- **S7 FIX — Duplicate scan guard**: `Indexer` tracks an in-flight scan promise. If `runFullScan` is called while a scan is already running, it returns the existing promise instead of starting a second scan (which would produce duplicate DB writes):
+  ```typescript
+  class Indexer {
+    private _scanPromise: Promise<void> | null = null;
+
+    async runFullScan(repoRoot: string): Promise<void> {
+      if (this._scanPromise) return this._scanPromise;  // dedup: return in-flight promise
+      this._scanPromise = this._doFullScan(repoRoot).finally(() => {
+        this._scanPromise = null;
+      });
+      return this._scanPromise;
+    }
+
+    private async _doFullScan(repoRoot: string): Promise<void> {
+      // ... actual scan logic
+    }
+  }
+  ```
+- **S6 FIX — `reloadFile` called on a never-yet-indexed file**: When a brand-new file is created and the watcher fires `reloadFile` before Pass 1 has committed the symbols to DB, `currentRows` will be empty and `graph.fileIndex.set(fileId, [])` stores an empty array. The second `reloadFile` call (after Pass 1 commits) correctly re-syncs because it re-queries `symbols WHERE file_id = ?`. This is safe: the debounce (300ms) plus the transaction commit time means Pass 1 almost always commits before `reloadFile` runs. For the rare race case, the empty `fileIndex` entry is harmless — the next `reloadFile` will re-populate it correctly. No additional fix needed beyond the existing B-2 re-sync logic.
 
 ### ModuleMap (`src/indexer/module-map.ts`)
 
@@ -849,7 +937,13 @@ class IdMapper {
     return id;
   }
 
-  resolve(id: number): string { return this.intToUuid[id]; }
+  // S10 FIX: guard against out-of-bounds IDs (orphaned FK rows from symbol deletes
+  // that occurred between loadFromDb and now, before PRAGMA foreign_keys = ON is set)
+  resolve(id: number): string {
+    const uuid = this.intToUuid[id];
+    if (uuid === undefined) throw new Error(`IdMapper: unknown IntId ${id} — possible orphaned edge`);
+    return uuid;
+  }
 }
 ```
 
@@ -1092,10 +1186,17 @@ if (!existsSync(REPO_ROOT)) {
   process.exit(1);
 }
 
+// B1 FIX: Compute repoId-based slug BEFORE opening DB.
+// ensureRepo() uses the same algorithm internally — pre-computing here avoids
+// a chicken-and-egg: we need the DB filename to open the DB, but we'd need the
+// DB open to call ensureRepo(). Solution: hash the path inline.
+const _normalizedRoot = path.resolve(REPO_ROOT).replace(/\\/g, '/').toLowerCase();
+const _repoSlug = createHash('sha256').update(_normalizedRoot).digest('hex').slice(0, 8);
+
 const DB_PATH = process.env.DB_PATH
   // S-4 FIX: append repoId slice to slugified name to prevent collision between
   // similarly-named repos (e.g. /projects/frontend and /projects-frontend → same slug)
-  ?? path.join(__dirname, '..', 'data', `${slugify(REPO_ROOT)}-${repoId.slice(0, 8)}.db`);
+  ?? path.join(__dirname, '..', 'data', `${slugify(REPO_ROOT)}-${_repoSlug}.db`);
 
 // EC-6.2 FIX: Ensure DB directory exists before opening (fresh clone / first run)
 mkdirSync(path.dirname(DB_PATH), { recursive: true });
@@ -1152,7 +1253,10 @@ invalidate(repoId: string): void {
 
 getGraph(repoId: string): RepoGraph {
   // S-3 FIX: return empty sentinel during scan — don't cache a partial graph
-  if (this.scanInProgress.has(repoId)) return EMPTY_REPO_GRAPH;
+  // B3 FIX: return a FRESH empty graph each time (not a singleton) to prevent
+  // callers from mutating shared state via mapper.intern() during scan.
+  // The cost is a trivial object allocation; no IdMapper/Map growth can persist.
+  if (this.scanInProgress.has(repoId)) return makeEmptyRepoGraph();
   this.lastAccess.set(repoId, Date.now());
   if (!this.graphs.has(repoId)) {
     this.graphs.set(repoId, this.loadFromDb(repoId));
@@ -1160,12 +1264,10 @@ getGraph(repoId: string): RepoGraph {
   return this.graphs.get(repoId)!;
 }
 
-// Stable empty sentinel — reused across calls, never cached in this.graphs
-const EMPTY_REPO_GRAPH: RepoGraph = {
-  nodes:     new Map(),
-  mapper:    new IdMapper(),
-  fileIndex: new Map(),
-};
+// B3 FIX: factory function instead of singleton constant
+function makeEmptyRepoGraph(): RepoGraph {
+  return { nodes: new Map(), mapper: new IdMapper(), fileIndex: new Map() };
+}
 ```
 
 `ensureRepo` inserts a row into `repos` if not already present, using the hash of `REPO_ROOT` as the stable ID across restarts.
@@ -1205,7 +1307,9 @@ export function ensureRepo(db: Database, rootPath: string): string {
   db.prepare(`
     INSERT INTO repos (id, name, root_path)
     VALUES (?, ?, ?)
-    ON CONFLICT(id) DO UPDATE SET last_seen = datetime('now')
+    ON CONFLICT(id) DO UPDATE SET
+      last_seen = datetime('now'),
+      name      = excluded.name   -- S8 FIX: update name on conflict (handles repo renames)
   `).run(repoId, basename(rootPath), normalized);  // store normalized path, not raw rootPath
 
   return repoId;
@@ -1216,8 +1320,9 @@ export function ensureRepo(db: Database, rootPath: string): string {
 
 ```typescript
 // Converts "/projects/company/backend" → "projects-company-backend"
+// M15 FIX: fallback to 'repo' if result is empty (e.g. input '/' → '')
 function slugify(p: string): string {
-  return p.replace(/[^\w]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+  return p.replace(/[^\w]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '') || 'repo';
 }
 ```
 
