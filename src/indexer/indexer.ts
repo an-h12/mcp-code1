@@ -4,6 +4,8 @@ import PQueue from 'p-queue';
 import type { Db } from '../db/index.js';
 import { supportedExtensions } from '../parser/grammars.js';
 import { indexFile } from './index-file.js';
+import { RelationExtractor } from './relation-extractor.js';
+import { ModuleMap } from './module-map.js';
 
 export type IndexRepoResult = {
   repoId: string;
@@ -37,11 +39,15 @@ export class Indexer {
   private db: Db;
   private queue: PQueue;
   private supportedExts: Set<string>;
+  private relationExtractor: RelationExtractor;
+  private moduleMap: ModuleMap;
 
   constructor(db: Db, concurrency = 4) {
     this.db = db;
     this.queue = new PQueue({ concurrency });
     this.supportedExts = new Set(supportedExtensions());
+    this.relationExtractor = new RelationExtractor(db);
+    this.moduleMap = new ModuleMap();
   }
 
   async indexRepo(repoId: string, rootPath: string): Promise<IndexRepoResult> {
@@ -67,6 +73,24 @@ export class Indexer {
     );
 
     await Promise.all(tasks);
+
+    // Pass 2: extract and persist relations for all indexed files
+    let edgesTotal = 0;
+    for (const f of files) {
+      const relPath = f.replace(rootPath + '/', '').replace(rootPath + '\\', '');
+      const fileRow = this.db
+        .prepare(`SELECT id FROM files WHERE repo_id = ? AND rel_path = ?`)
+        .get(repoId, relPath) as { id: string } | undefined;
+      if (!fileRow) continue;
+      edgesTotal += this.relationExtractor.extractAndPersist(
+        repoId,
+        f,
+        relPath,
+        fileRow.id,
+        this.moduleMap,
+      );
+    }
+    void edgesTotal;
 
     return {
       repoId,
