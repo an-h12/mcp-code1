@@ -436,8 +436,9 @@ Communication: JSON over stdin/stdout. The daemon is a long-running subprocess; 
 export class RoslynBridge {
   private daemon: ChildProcess | null = null;
   private readonly TIMEOUT_MS = 30_000;
+  private _cleanupRegistered = false;  // S-5 FIX: register process cleanup only once
 
-  private ensureDaemon(): ChildProcess {
+  private ensureDaemon(): ChildProcess | null {
     if (this.daemon && !this.daemon.killed) return this.daemon;
 
     const binPath = getRoslynBinaryPath();
@@ -456,9 +457,15 @@ export class RoslynBridge {
       this.daemon = null;
     });
 
-    // Cleanup on server exit (EC-1.2): prevent orphaned processes
-    process.on('exit', () => this.daemon?.kill());
-    process.on('SIGTERM', () => { this.daemon?.kill(); process.exit(0); });
+    // S-5 FIX: Register process-level cleanup ONCE per RoslynBridge instance lifetime
+    // Using _cleanupRegistered flag prevents MaxListenersExceededWarning on repeated respawns
+    if (!this._cleanupRegistered) {
+      this._cleanupRegistered = true;
+      const cleanup = () => this.daemon?.kill();
+      process.once('exit', cleanup);
+      process.once('SIGTERM', () => { cleanup(); process.exit(0); });
+      process.once('SIGINT',  () => { cleanup(); process.exit(0); });
+    }
 
     return this.daemon;
   }
@@ -538,13 +545,17 @@ export class ContextEnricher {
   }
 
   extractMentions(message: string): string[] {
-    return [
+    const raw = [
       ...message.matchAll(/`([A-Za-z_][A-Za-z0-9_.]*)`/g),     // backtick
       ...message.matchAll(/\b([A-Z][a-z]+(?:[A-Z][a-z]+)+)\b/g), // PascalCase
       ...message.matchAll(/hàm\s+([A-Za-z_]\w*)/g),              // Vietnamese
       ...message.matchAll(/function\s+([A-Za-z_]\w*)/g),         // English
       ...message.matchAll(/([A-Za-z0-9_/.-]+\.[a-z]{2,4})/g),    // file paths
-    ].map(m => m[1]).slice(0, TOKEN_BUDGET.maxSymbols);
+    ].map(m => m[1]);
+    // S-6 FIX: deduplicate before applying budget cap
+    // A symbol like `processOrder` matching both backtick AND PascalCase regex
+    // would otherwise consume 2 of the 5 maxSymbols slots for the same name.
+    return [...new Set(raw)].slice(0, TOKEN_BUDGET.maxSymbols);
   }
 
   private async resolveSymbols(names: string[]): Promise<ResolvedSymbol[]> {
@@ -961,16 +972,17 @@ reloadFile(repoId: string, fileId: string): void {
   }
 
   // 3. Remove stale incoming edges from all targets
+  // S-1 FIX: Set instead of Array.includes() — O(1) vs O(n) per edge
+  const affectedSet = new Set<IntId>(affectedIntIds);
   for (const tgtId of staleTgtIds) {
     const tgtNode = graph.nodes.get(tgtId);
     if (!tgtNode) continue;
     tgtNode.incoming = tgtNode.incoming.filter(
-      e => !affectedIntIds.includes(e.targetId)
+      e => !affectedSet.has(e.targetId)
     );
   }
 
-  // EC-5.1 FIX: Prune ghost nodes for symbols deleted/renamed in this file.
-  // Check which affectedIntIds no longer have a corresponding symbol in DB.
+  // EC-5.1: Prune ghost nodes for symbols deleted/renamed in this file.
   const affectedUuids = affectedIntIds.map(id => graph.mapper.resolve(id));
   const CHUNK = 500;
   const stillExistingUuids = new Set<string>();
@@ -981,20 +993,38 @@ reloadFile(repoId: string, fileId: string): void {
     ).all(...batch) as Array<{ id: string }>;
     rows.forEach(r => stillExistingUuids.add(r.id));
   }
-  for (const [intId, uuid] of affectedIntIds.map((id, i) => [id, affectedUuids[i]] as [IntId, string])) {
+  // Iterate backwards so splice doesn't shift indices
+  const list = graph.fileIndex.get(fileId) ?? [];
+  for (let i = list.length - 1; i >= 0; i--) {
+    const intId = list[i];
+    const uuid  = graph.mapper.resolve(intId);
     if (!stillExistingUuids.has(uuid)) {
-      graph.nodes.delete(intId);          // remove ghost node
-      graph.fileIndex.get(fileId)?.splice(
-        graph.fileIndex.get(fileId)!.indexOf(intId), 1
-      );
+      graph.nodes.delete(intId);
+      list.splice(i, 1);
     }
   }
 
-  // 4. Re-load fresh edges from DB — chunked to avoid SQLite variable limit (EC-3.1)
-  const survivingUuids = [...stillExistingUuids];
+  // B-2 FIX: Re-sync fileIndex with CURRENT DB state — captures NEW symbols added to this file.
+  // Without this, newly-added functions are invisible in the graph until the 30-min TTL eviction.
+  const currentRows = this.db.prepare(
+    `SELECT id FROM symbols WHERE file_id = ? AND repo_id = ?`
+  ).all(fileId, repoId) as Array<{ id: string }>;
+
+  const updatedIntIds: IntId[] = [];
+  for (const row of currentRows) {
+    const intId = graph.mapper.intern(row.id);   // idempotent for existing UUIDs
+    if (!graph.nodes.has(intId)) {
+      graph.nodes.set(intId, { outgoing: [], incoming: [] });  // new symbol
+    }
+    updatedIntIds.push(intId);
+  }
+  graph.fileIndex.set(fileId, updatedIntIds);  // authoritative current set
+
+  // 4. Re-load edges for ALL current symbols (surviving + newly added) — chunked (EC-3.1)
+  const allCurrentUuids = currentRows.map(r => r.id);
   const freshRows: any[] = [];
-  for (let i = 0; i < survivingUuids.length; i += CHUNK) {
-    const batch = survivingUuids.slice(i, i + CHUNK);
+  for (let i = 0; i < allCurrentUuids.length; i += CHUNK) {
+    const batch = allCurrentUuids.slice(i, i + CHUNK);
     const rows = this.db.prepare(`
       SELECT source_id, target_id, type, confidence
       FROM symbol_relations
@@ -1063,7 +1093,9 @@ if (!existsSync(REPO_ROOT)) {
 }
 
 const DB_PATH = process.env.DB_PATH
-  ?? path.join(__dirname, '..', 'data', `${slugify(REPO_ROOT)}.db`);
+  // S-4 FIX: append repoId slice to slugified name to prevent collision between
+  // similarly-named repos (e.g. /projects/frontend and /projects-frontend → same slug)
+  ?? path.join(__dirname, '..', 'data', `${slugify(REPO_ROOT)}-${repoId.slice(0, 8)}.db`);
 
 // EC-6.2 FIX: Ensure DB directory exists before opening (fresh clone / first run)
 mkdirSync(path.dirname(DB_PATH), { recursive: true });
@@ -1073,13 +1105,26 @@ mkdirSync(path.dirname(DB_PATH), { recursive: true });
 await runMigrations(DB_PATH);
 const repoId = ensureRepo(db, REPO_ROOT);  // synchronous (better-sqlite3)
 
-// EC-6.4 FIX: Trigger initial index scan, then invalidate graph cache when done.
-// On first run, DB is empty — tools return [] until indexing finishes.
-// After indexing, the empty cached graph is invalidated so next request loads fresh data.
-indexer.runFullScan(REPO_ROOT).then(() => {
-  graph.invalidate(repoId);  // evict any cached (empty) graph → next getGraph() loads real data
-  logger.info({ repoId }, 'Initial index complete — graph ready');
-});
+// EC-6.4 FIX + B-1 FIX: Trigger initial index scan with error handling + invalidate on complete.
+// S-3 FIX: Set scanInProgress flag so reloadFile() is a no-op during scan (avoids partial patches).
+graph.setScanInProgress(repoId, true);
+indexer.runFullScan(REPO_ROOT)
+  .then(() => {
+    graph.setScanInProgress(repoId, false);
+    graph.invalidate(repoId);   // evict any empty/partial graph → next getGraph() loads full data
+    logger.info({ repoId }, 'Initial index complete — graph ready');
+  })
+  .catch(err => {
+    // B-1 FIX: never swallow runFullScan errors
+    graph.setScanInProgress(repoId, false);
+    logger.error({ err, repoId }, 'runFullScan failed — graph may be incomplete. Retrying in 60s');
+    setTimeout(() => {
+      graph.setScanInProgress(repoId, true);
+      indexer.runFullScan(REPO_ROOT)
+        .then(() => { graph.setScanInProgress(repoId, false); graph.invalidate(repoId); })
+        .catch(e => logger.error({ e }, 'runFullScan retry also failed — restart server to recover'));
+    }, 60_000);
+  });
 
 // repoId is a module-level constant for this process lifetime
 app.repoId = repoId;
@@ -1092,11 +1137,35 @@ startMcpTransport();
 
 **`InMemoryGraph.invalidate(repoId)`** implementation:
 ```typescript
+private scanInProgress = new Set<string>();  // repoIds currently being scanned
+
+setScanInProgress(repoId: string, inProgress: boolean): void {
+  if (inProgress) this.scanInProgress.add(repoId);
+  else this.scanInProgress.delete(repoId);
+}
+
 invalidate(repoId: string): void {
   this.graphs.delete(repoId);
   this.lastAccess.delete(repoId);
   // Next call to getGraph(repoId) triggers a fresh loadFromDb()
 }
+
+getGraph(repoId: string): RepoGraph {
+  // S-3 FIX: return empty sentinel during scan — don't cache a partial graph
+  if (this.scanInProgress.has(repoId)) return EMPTY_REPO_GRAPH;
+  this.lastAccess.set(repoId, Date.now());
+  if (!this.graphs.has(repoId)) {
+    this.graphs.set(repoId, this.loadFromDb(repoId));
+  }
+  return this.graphs.get(repoId)!;
+}
+
+// Stable empty sentinel — reused across calls, never cached in this.graphs
+const EMPTY_REPO_GRAPH: RepoGraph = {
+  nodes:     new Map(),
+  mapper:    new IdMapper(),
+  fileIndex: new Map(),
+};
 ```
 
 `ensureRepo` inserts a row into `repos` if not already present, using the hash of `REPO_ROOT` as the stable ID across restarts.
