@@ -33,7 +33,15 @@ const IGNORE_DIRS = new Set([
   'vendor',
   '.idea',
   '.vscode',
+  // C# specific
+  'obj',
+  'bin',
+  'packages',
+  '.vs',
 ]);
+
+const CS_IGNORE_SUFFIXES = ['.Designer.cs', '.g.cs', '.generated.cs'];
+const CS_IGNORE_NAMES = new Set(['AssemblyInfo.cs', 'GlobalUsings.g.cs']);
 
 export class Indexer {
   private db: Db;
@@ -128,6 +136,9 @@ export class Indexer {
         if (IGNORE_DIRS.has(entry)) continue;
         this.walk(full, out);
       } else if (stat.isFile()) {
+        if (CS_IGNORE_NAMES.has(entry) || CS_IGNORE_SUFFIXES.some((s) => entry.endsWith(s))) {
+          continue;
+        }
         if (this.supportedExts.has(extname(full))) {
           out.push(full);
         }
