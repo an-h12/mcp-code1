@@ -97,7 +97,8 @@ type ResolvedSymbol = {
   id:       string;   // UUID
   name:     string;
   filePath: string;
-  repoId:   string;   // needed to load the correct RepoGraph
+  repoId:   string;   // always equals process-level app.repoId in single-repo model;
+                      // kept for internal consistency (fetchSymbolContext uses it to call getGraph)
 };
 ```
 
@@ -414,13 +415,13 @@ Communication: JSON over stdin/stdout. The daemon is a long-running subprocess; 
 
 | Tool | Input | Output |
 |------|-------|--------|
-| `get_symbol_context` | `{ symbolName: string, repoId: string, depth?: 1\|2\|3 }` | `{ symbol, callers[], callees[], imports[], impactCount }` |
-| `get_impact_analysis` | `{ symbolName: string, repoId: string }` | `{ depth1: string[], depth2: string[], depth3: string[], totalCount: number }` |
-| `find_callers` | `{ symbolName: string, repoId: string }` | `{ callers: Array<{ name, filePath, line }> }` |
-| `find_callees` | `{ symbolName: string, repoId: string }` | `{ callees: Array<{ name, filePath, line }> }` |
-| `get_import_chain` | `{ filePath: string, repoId: string, depth?: number }` | `{ chain: Array<{ file, imports: string[] }> }` |
+| `get_symbol_context` | `{ symbolName: string, depth?: 1\|2\|3 }` | `{ symbol, callers[], callees[], impactCount }` |
+| `get_impact_analysis` | `{ symbolName: string }` | `{ depth1: string[], depth2: string[], depth3: string[], totalCount: number }` |
+| `find_callers` | `{ symbolName: string }` | `{ callers: Array<{ name, filePath, line }> }` |
+| `find_callees` | `{ symbolName: string }` | `{ callees: Array<{ name, filePath, line }> }` |
+| `get_import_chain` | `{ filePath: string, depth?: number }` | `{ chain: Array<{ file, imports: string[] }> }` |
 
-All tools accept `repoId` as required. `symbolName` supports exact match and partial match (uses FTS fallback). All responses include a `resolvedAs` field showing which symbol was matched when disambiguation was needed.
+`repoId` is **not required** in any tool call — the server resolves it automatically from `REPO_ROOT` at startup (see Section 7). All responses include a `resolvedAs` field showing which symbol was matched when disambiguation was needed.
 
 Total tools: 11 existing + 5 new = 16 tools (same count as GitNexus).
 
@@ -432,9 +433,17 @@ Works with **any AI model** regardless of tool-calling capability. The MCP serve
 // src/mcp/context-enricher.ts
 
 export class ContextEnricher {
-  async enrich(userMessage: string, repoId?: string): Promise<EnrichedContext> {
+  // repoId injected at construction time from app.repoId (process-level constant)
+  // No repoId parameter in any public method — single-repo-per-process model (see Section 7)
+  constructor(
+    private readonly repoId: string,
+    private readonly db: Database,
+    private readonly graph: InMemoryGraph,
+  ) {}
+
+  async enrich(userMessage: string): Promise<EnrichedContext> {
     const mentions        = this.extractMentions(userMessage);
-    const resolvedSymbols = await this.resolveSymbols(mentions, repoId);
+    const resolvedSymbols = await this.resolveSymbols(mentions);
     const symbolContexts  = await Promise.all(
       resolvedSymbols.map(s => this.fetchSymbolContext(s.id, s.repoId, 2))
     );
@@ -451,15 +460,15 @@ export class ContextEnricher {
     ].map(m => m[1]).slice(0, TOKEN_BUDGET.maxSymbols);
   }
 
-  private async resolveSymbols(names: string[], repoId?: string): Promise<ResolvedSymbol[]> {
+  private async resolveSymbols(names: string[]): Promise<ResolvedSymbol[]> {
     const results: ResolvedSymbol[] = [];
     for (const name of names.slice(0, TOKEN_BUDGET.maxSymbols)) {
       // 1. Exact name match in DB (fastest)
       let row = this.db.prepare(
         `SELECT id, name, file_path, kind, repo_id FROM symbols
-         WHERE name = ? ${repoId ? 'AND repo_id = ?' : ''}
+         WHERE name = ? AND repo_id = ?
          LIMIT 1`
-      ).get(name, ...(repoId ? [repoId] : []));
+      ).get(name, this.repoId);
 
       // 2. FTS fuzzy fallback if no exact match
       if (!row) {
@@ -467,10 +476,9 @@ export class ContextEnricher {
           `SELECT s.id, s.name, s.file_path, s.kind, s.repo_id
            FROM symbols_fts fts
            JOIN symbols s ON s.id = fts.rowid
-           WHERE symbols_fts MATCH ?
-             ${repoId ? 'AND s.repo_id = ?' : ''}
+           WHERE symbols_fts MATCH ? AND s.repo_id = ?
            ORDER BY rank LIMIT 1`
-        ).get(name, ...(repoId ? [repoId] : []));
+        ).get(name, this.repoId);
       }
 
       if (row) results.push({ id: row.id, name: row.name, filePath: row.file_path, repoId: row.repo_id });
@@ -868,6 +876,170 @@ reloadFile(repoId: string, fileId: string): void {
 ```
 
 `graph.fileIndex` is a `Map<string, IntId[]>` (fileId → list of integer IDs for symbols in that file) built during `loadFromDb` and updated during `reloadFile`.
+
+---
+
+## Section 7: Deployment Model — Cline + Local Model
+
+### Design decision: 1 MCP server instance per project
+
+The MCP server is designed to run as **one process per project**, not as a shared multi-repo server. This is the natural model for Cline (VS Code extension) and eliminates all multi-repo isolation complexity.
+
+```
+VS Code Window A (backend)         VS Code Window B (frontend)
+        │                                    │
+  Cline MCP config                    Cline MCP config
+  "mcp-backend" entry                 "mcp-frontend" entry
+        │                                    │
+  node server.js                      node server.js
+  cwd = /projects/backend             cwd = /projects/frontend
+  DB  = data/backend.db               DB  = data/frontend.db
+        │                                    │
+  Graph: backend only                 Graph: frontend only
+  RAM:  ~30-50 MB                     RAM:  ~30-50 MB (isolated)
+```
+
+Each server instance knows exactly one repo — the one it was started for. There is no `repoId` resolution logic, no cross-repo leakage, and no shared DB.
+
+### How the server knows which repo it serves
+
+At startup, the server reads `REPO_ROOT` from environment (set by Cline config) or falls back to `process.cwd()`:
+
+```typescript
+// src/app.ts — server startup
+
+const REPO_ROOT = process.env.REPO_ROOT
+  ? path.resolve(process.env.REPO_ROOT)
+  : process.cwd();
+
+const DB_PATH = process.env.DB_PATH
+  ?? path.join(__dirname, '..', 'data', `${slugify(REPO_ROOT)}.db`);
+
+// Auto-register this repo on first run
+const repoId = await repoRegistry.ensureRepo(REPO_ROOT);
+
+// repoId is a module-level constant for this process lifetime
+// All tools, ContextEnricher, and InMemoryGraph use it directly
+// No repoId parameter needed in any tool call
+app.repoId = repoId;
+```
+
+`ensureRepo` inserts a row into `repos` if not already present, using the hash of `REPO_ROOT` as the stable ID across restarts.
+
+### `repos` table schema
+
+The `repos` table (referenced as FK in Section 1) has this structure:
+
+```sql
+CREATE TABLE IF NOT EXISTS repos (
+  id         TEXT PRIMARY KEY,   -- stable ID: SHA-256(normalized REPO_ROOT), truncated to 16 hex chars
+  name       TEXT NOT NULL,      -- basename of REPO_ROOT (e.g. "backend")
+  root_path  TEXT NOT NULL UNIQUE,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_seen  TEXT NOT NULL DEFAULT (datetime('now'))
+);
+```
+
+### `ensureRepo` implementation
+
+```typescript
+// src/db/repo-registry.ts
+
+import { createHash } from 'crypto';
+import { basename } from 'path';
+
+export function ensureRepo(db: Database, rootPath: string): string {
+  // Normalize path: resolve symlinks, lowercase on Windows
+  const normalized = rootPath.replace(/\\/g, '/').toLowerCase();
+
+  // Stable ID: first 16 chars of SHA-256(normalized path)
+  const repoId = createHash('sha256').update(normalized).digest('hex').slice(0, 16);
+
+  db.prepare(`
+    INSERT INTO repos (id, name, root_path)
+    VALUES (?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET last_seen = datetime('now')
+  `).run(repoId, basename(rootPath), rootPath);
+
+  return repoId;
+}
+```
+
+**`slugify` for DB filename** (used in `DB_PATH` default):
+
+```typescript
+// Converts "/projects/company/backend" → "projects-company-backend"
+function slugify(p: string): string {
+  return p.replace(/[^\w]/g, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+}
+```
+
+`ensureRepo` inserts a row into `repos` if not already present, using the hash of `REPO_ROOT` as the stable ID across restarts.
+
+### Cline MCP settings (2 projects example)
+
+```json
+{
+  "mcpServers": {
+    "mcp-backend": {
+      "command": "node",
+      "args": ["E:/Code/MCP-web/mcp-code1/dist/server.js"],
+      "cwd": "E:/Code/company/backend",
+      "env": {
+        "REPO_ROOT": "E:/Code/company/backend",
+        "DB_PATH":   "E:/Code/MCP-web/mcp-code1/data/backend.db"
+      }
+    },
+    "mcp-frontend": {
+      "command": "node",
+      "args": ["E:/Code/MCP-web/mcp-code1/dist/server.js"],
+      "cwd": "E:/Code/company/frontend",
+      "env": {
+        "REPO_ROOT": "E:/Code/company/frontend",
+        "DB_PATH":   "E:/Code/MCP-web/mcp-code1/data/frontend.db"
+      }
+    }
+  }
+}
+```
+
+Same binary, two independent processes, two isolated databases.
+
+### Impact on tool signatures
+
+Because `repoId` is resolved at startup and stored as a process-level constant, **all 5 new MCP tools drop `repoId` from their required parameters**:
+
+| Tool | Before (multi-repo) | After (single-repo per process) |
+|------|--------------------|---------------------------------|
+| `get_symbol_context` | `{ symbolName, repoId, depth? }` | `{ symbolName, depth? }` |
+| `get_impact_analysis` | `{ symbolName, repoId }` | `{ symbolName }` |
+| `find_callers` | `{ symbolName, repoId }` | `{ symbolName }` |
+| `find_callees` | `{ symbolName, repoId }` | `{ symbolName }` |
+| `get_import_chain` | `{ filePath, repoId, depth? }` | `{ filePath, depth? }` |
+
+This also simplifies `ContextEnricher.resolveSymbols` — no `repoId?` parameter needed, the server always knows its own repo.
+
+### Local model on Cline
+
+Cline supports any OpenAI-compatible API endpoint as a custom provider. The local model connects via:
+
+```json
+{
+  "apiProvider": "openai-compatible",
+  "apiBaseUrl": "http://localhost:11434/v1",
+  "apiKey": "local",
+  "model": "your-local-model-name"
+}
+```
+
+The MCP tools are called by Cline's agent loop on behalf of the model — **the local model does not need native tool-calling capability**. Cline handles tool dispatch. The Tầng 2 ContextEnricher injects graph context directly into the prompt before the model sees it, so relationship intelligence works regardless of model capability.
+
+### Files to add
+
+| File | Purpose |
+|------|---------|
+| `src/app.ts` (update) | Read `REPO_ROOT` / `DB_PATH` from env at startup, set process-level `repoId` |
+| `data/` (gitignored dir) | Per-project SQLite databases |
 
 ---
 
