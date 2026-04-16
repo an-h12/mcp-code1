@@ -4,6 +4,8 @@ import { DbPool } from './db/pool.js';
 import { RepoRegistry } from './registry.js';
 import { Indexer } from './indexer/indexer.js';
 import { Watcher } from './watcher/watcher.js';
+import { McpServer } from './mcp/server.js';
+import type { AiConfig } from './mcp/ai-adapter.js';
 
 export class App {
   readonly config: Config;
@@ -12,6 +14,7 @@ export class App {
   readonly registry: RepoRegistry;
   readonly indexer: Indexer;
   readonly watcher: Watcher;
+  private mcpServer: McpServer | null = null;
 
   constructor() {
     this.config = loadConfig();
@@ -35,11 +38,33 @@ export class App {
         void this.indexer.indexRepo(repo.id, repo.rootPath);
       });
     }
+
+    const aiConfig: AiConfig | null = this.config.aiApiKey
+      ? {
+          apiKey: this.config.aiApiKey,
+          baseUrl: this.config.aiApiBaseUrl,
+          model: this.config.aiModel,
+        }
+      : null;
+
+    this.mcpServer = new McpServer({
+      db: this.pool.acquire(),
+      registry: this.registry,
+      indexer: this.indexer,
+      aiConfig,
+    });
+
+    await this.mcpServer.connectStdio();
+    this.log.info('MCP server listening on stdio');
   }
 
   async stop(): Promise<void> {
     this.log.info('App stopping');
     await this.watcher.close();
+    if (this.mcpServer) {
+      await this.mcpServer.close();
+      this.mcpServer = null;
+    }
     this.pool.close();
   }
 }
