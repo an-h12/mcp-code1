@@ -15,6 +15,11 @@ import {
   ExplainSymbolSchema,
   GetRepoStatsSchema,
   RemoveRepoSchema,
+  GetSymbolContextSchema,
+  GetImpactAnalysisSchema,
+  FindCallersSchema,
+  FindCalleesSchema,
+  GetImportChainSchema,
 } from '../tool-schemas.js';
 import { searchSymbols } from './search-symbols.js';
 import { getSymbolDetail } from './get-symbol-detail.js';
@@ -27,6 +32,11 @@ import { getFileSymbols } from './get-file-symbols.js';
 import { explainSymbol } from './explain-symbol.js';
 import { getRepoStats } from './get-repo-stats.js';
 import { removeRepo } from './remove-repo.js';
+import { getSymbolContext } from './get-symbol-context.js';
+import { getImpactAnalysis } from './get-impact-analysis.js';
+import { findCallers } from './find-callers.js';
+import { findCallees } from './find-callees.js';
+import { getImportChain } from './get-import-chain.js';
 import { createAiAdapter } from '../ai-adapter.js';
 import { isAppError } from '../../errors.js';
 
@@ -151,6 +161,57 @@ const TOOL_DEFINITIONS: Array<{ name: string; description: string; inputSchema: 
       required: ['repo_id'],
     },
   },
+  {
+    name: 'get_symbol_context',
+    description: 'Get callers, callees, and impact for a symbol (BFS depth 1-3).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        symbol_name: { type: 'string' },
+        depth: { type: 'integer', minimum: 1, maximum: 3, default: 2 },
+      },
+      required: ['symbol_name'],
+    },
+  },
+  {
+    name: 'get_impact_analysis',
+    description: 'Get depth-1/2/3 blast radius for a symbol.',
+    inputSchema: {
+      type: 'object',
+      properties: { symbol_name: { type: 'string' } },
+      required: ['symbol_name'],
+    },
+  },
+  {
+    name: 'find_callers',
+    description: 'Find all symbols that call the given symbol.',
+    inputSchema: {
+      type: 'object',
+      properties: { symbol_name: { type: 'string' } },
+      required: ['symbol_name'],
+    },
+  },
+  {
+    name: 'find_callees',
+    description: 'Find all symbols called by the given symbol.',
+    inputSchema: {
+      type: 'object',
+      properties: { symbol_name: { type: 'string' } },
+      required: ['symbol_name'],
+    },
+  },
+  {
+    name: 'get_import_chain',
+    description: 'Get the import dependency chain for a file.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        file_path: { type: 'string' },
+        depth: { type: 'integer', minimum: 1, maximum: 5, default: 3 },
+      },
+      required: ['file_path'],
+    },
+  },
 ];
 
 export function registerToolHandlers(server: McpSdkServer, opts: McpServerOptions): void {
@@ -234,6 +295,36 @@ export function registerToolHandlers(server: McpSdkServer, opts: McpServerOption
           const p = RemoveRepoSchema.parse(args);
           removeRepo(opts.registry, p.repo_id);
           return { content: [{ type: 'text', text: `Repo ${p.repo_id} removed.` }] };
+        }
+        case 'get_symbol_context': {
+          const p = GetSymbolContextSchema.parse(args);
+          const result = getSymbolContext(opts.db, opts.graph, opts.repoId, p.symbol_name, p.depth);
+          if (!result) return { content: [{ type: 'text', text: `Symbol not found: ${p.symbol_name}` }], isError: true };
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        }
+        case 'get_impact_analysis': {
+          const p = GetImpactAnalysisSchema.parse(args);
+          const result = getImpactAnalysis(opts.db, opts.graph, opts.repoId, p.symbol_name);
+          if (!result) return { content: [{ type: 'text', text: `Symbol not found: ${p.symbol_name}` }], isError: true };
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        }
+        case 'find_callers': {
+          const p = FindCallersSchema.parse(args);
+          const result = findCallers(opts.db, opts.graph, opts.repoId, p.symbol_name);
+          if (!result) return { content: [{ type: 'text', text: `Symbol not found: ${p.symbol_name}` }], isError: true };
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        }
+        case 'find_callees': {
+          const p = FindCalleesSchema.parse(args);
+          const result = findCallees(opts.db, opts.graph, opts.repoId, p.symbol_name);
+          if (!result) return { content: [{ type: 'text', text: `Symbol not found: ${p.symbol_name}` }], isError: true };
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
+        }
+        case 'get_import_chain': {
+          const p = GetImportChainSchema.parse(args);
+          const result = getImportChain(opts.db, opts.graph, opts.repoId, p.file_path, p.depth);
+          if (!result) return { content: [{ type: 'text', text: `File not found: ${p.file_path}` }], isError: true };
+          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
         }
         default:
           return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };

@@ -50,3 +50,25 @@ export const RemoveRepoSchema = z.object({
 });
 
 export const ListReposSchema = z.object({});
+
+export const GetSymbolContextSchema = z.object({
+  symbol_name: z.string().min(1),
+  depth: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional().default(2),
+});
+
+export const GetImpactAnalysisSchema = z.object({
+  symbol_name: z.string().min(1),
+});
+
+export const FindCallersSchema = z.object({
+  symbol_name: z.string().min(1),
+});
+
+export const FindCalleesSchema = z.object({
+  symbol_name: z.string().min(1),
+});
+
+export const GetImportChainSchema = z.object({
+  file_path: z.string().min(1),
+  depth: z.number().int().min(1).max(5).optional().default(3),
+});

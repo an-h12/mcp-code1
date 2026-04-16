@@ -5,6 +5,7 @@ import { RepoRegistry } from './registry.js';
 import { Indexer } from './indexer/indexer.js';
 import { Watcher } from './watcher/watcher.js';
 import { McpServer } from './mcp/server.js';
+import { InMemoryGraph } from './graph/in-memory-graph.js';
 import type { AiConfig } from './mcp/ai-adapter.js';
 
 export class App {
@@ -52,6 +53,8 @@ export class App {
       registry: this.registry,
       indexer: this.indexer,
       aiConfig,
+      graph: new InMemoryGraph(this.pool.acquire()),
+      repoId: '',
     });
 
     await this.mcpServer.connectStdio();
