@@ -21,9 +21,6 @@ export const TOOL_NAMES = [
   'get_repo_stats',
   'remove_repo',
   'get_symbol_context',
-  'get_impact_analysis',
-  'find_callers',
-  'find_callees',
   'get_import_chain',
 ] as const;
 

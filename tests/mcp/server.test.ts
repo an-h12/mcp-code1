@@ -29,10 +29,7 @@ describe('McpServer', () => {
     expect(TOOL_NAMES).toContain('get_repo_stats');
     expect(TOOL_NAMES).toContain('remove_repo');
     expect(TOOL_NAMES).toContain('get_symbol_context');
-    expect(TOOL_NAMES).toContain('get_impact_analysis');
-    expect(TOOL_NAMES).toContain('find_callers');
-    expect(TOOL_NAMES).toContain('find_callees');
     expect(TOOL_NAMES).toContain('get_import_chain');
-    expect(TOOL_NAMES).toHaveLength(16);
+    expect(TOOL_NAMES).toHaveLength(13);
   });
 });

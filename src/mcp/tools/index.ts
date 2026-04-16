@@ -16,9 +16,6 @@ import {
   GetRepoStatsSchema,
   RemoveRepoSchema,
   GetSymbolContextSchema,
-  GetImpactAnalysisSchema,
-  FindCallersSchema,
-  FindCalleesSchema,
   GetImportChainSchema,
 } from '../tool-schemas.js';
 import { searchSymbols } from './search-symbols.js';
@@ -33,9 +30,6 @@ import { explainSymbol } from './explain-symbol.js';
 import { getRepoStats } from './get-repo-stats.js';
 import { removeRepo } from './remove-repo.js';
 import { getSymbolContext } from './get-symbol-context.js';
-import { getImpactAnalysis } from './get-impact-analysis.js';
-import { findCallers } from './find-callers.js';
-import { findCallees } from './find-callees.js';
 import { getImportChain } from './get-import-chain.js';
 import { createAiAdapter } from '../ai-adapter.js';
 import { isAppError } from '../../errors.js';
@@ -49,7 +43,8 @@ type JsonSchema = {
 const TOOL_DEFINITIONS: Array<{ name: string; description: string; inputSchema: JsonSchema }> = [
   {
     name: 'search_symbols',
-    description: 'Search for code symbols using FTS5 (with LIKE fallback).',
+    description:
+      'Fuzzy/FTS5 search for symbols by keyword or partial name. Returns multiple ranked matches. Use when you do NOT know the exact name; use find_references for exact lookup.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -63,7 +58,8 @@ const TOOL_DEFINITIONS: Array<{ name: string; description: string; inputSchema: 
   },
   {
     name: 'get_symbol_detail',
-    description: 'Get details of a symbol by ID.',
+    description:
+      'Metadata-only lookup by symbol UUID: file path, line range, signature, kind. Does NOT include callers/callees (use get_symbol_context for graph). Does NOT call AI (use explain_symbol for AI summary).',
     inputSchema: {
       type: 'object',
       properties: { symbol_id: { type: 'string' } },
@@ -99,7 +95,8 @@ const TOOL_DEFINITIONS: Array<{ name: string; description: string; inputSchema: 
   },
   {
     name: 'find_references',
-    description: 'Find all occurrences of a symbol name across indexed repos.',
+    description:
+      'Exact-name lookup: returns every location where this exact symbol name appears (definitions + uses). Use search_symbols for fuzzy/keyword search.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -136,7 +133,8 @@ const TOOL_DEFINITIONS: Array<{ name: string; description: string; inputSchema: 
   },
   {
     name: 'explain_symbol',
-    description: 'Get an explanation of a symbol (AI-enhanced when AI_API_KEY is configured).',
+    description:
+      'AI-generated natural-language explanation of a symbol. Requires AI_API_KEY env var (local LLM via OpenAI-compatible API); falls back to raw metadata if not configured. Prefer get_symbol_detail for pure metadata.',
     inputSchema: {
       type: 'object',
       properties: { symbol_id: { type: 'string' } },
@@ -163,7 +161,8 @@ const TOOL_DEFINITIONS: Array<{ name: string; description: string; inputSchema: 
   },
   {
     name: 'get_symbol_context',
-    description: 'Get callers, callees, and impact for a symbol (BFS depth 1-3).',
+    description:
+      'Graph view of a symbol: who calls it (callers) and what it calls (callees), up to BFS depth 3. Use depth=1 for direct callers/callees only. impactCount in response = total callers+callees across all depths, treat >=10 as high blast radius.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -174,35 +173,8 @@ const TOOL_DEFINITIONS: Array<{ name: string; description: string; inputSchema: 
     },
   },
   {
-    name: 'get_impact_analysis',
-    description: 'Get depth-1/2/3 blast radius for a symbol.',
-    inputSchema: {
-      type: 'object',
-      properties: { symbol_name: { type: 'string' } },
-      required: ['symbol_name'],
-    },
-  },
-  {
-    name: 'find_callers',
-    description: 'Find all symbols that call the given symbol.',
-    inputSchema: {
-      type: 'object',
-      properties: { symbol_name: { type: 'string' } },
-      required: ['symbol_name'],
-    },
-  },
-  {
-    name: 'find_callees',
-    description: 'Find all symbols called by the given symbol.',
-    inputSchema: {
-      type: 'object',
-      properties: { symbol_name: { type: 'string' } },
-      required: ['symbol_name'],
-    },
-  },
-  {
     name: 'get_import_chain',
-    description: 'Get the import dependency chain for a file.',
+    description: 'Get the import dependency chain starting from a file (IMPORTS edges, BFS).',
     inputSchema: {
       type: 'object',
       properties: {
@@ -299,24 +271,6 @@ export function registerToolHandlers(server: McpSdkServer, opts: McpServerOption
         case 'get_symbol_context': {
           const p = GetSymbolContextSchema.parse(args);
           const result = getSymbolContext(opts.db, opts.graph, opts.repoId, p.symbol_name, p.depth);
-          if (!result) return { content: [{ type: 'text', text: `Symbol not found: ${p.symbol_name}` }], isError: true };
-          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-        }
-        case 'get_impact_analysis': {
-          const p = GetImpactAnalysisSchema.parse(args);
-          const result = getImpactAnalysis(opts.db, opts.graph, opts.repoId, p.symbol_name);
-          if (!result) return { content: [{ type: 'text', text: `Symbol not found: ${p.symbol_name}` }], isError: true };
-          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-        }
-        case 'find_callers': {
-          const p = FindCallersSchema.parse(args);
-          const result = findCallers(opts.db, opts.graph, opts.repoId, p.symbol_name);
-          if (!result) return { content: [{ type: 'text', text: `Symbol not found: ${p.symbol_name}` }], isError: true };
-          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-        }
-        case 'find_callees': {
-          const p = FindCalleesSchema.parse(args);
-          const result = findCallees(opts.db, opts.graph, opts.repoId, p.symbol_name);
           if (!result) return { content: [{ type: 'text', text: `Symbol not found: ${p.symbol_name}` }], isError: true };
           return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
         }
