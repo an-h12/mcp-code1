@@ -3,6 +3,7 @@ import path from 'node:path';
 import { loadConfig, type Config } from './config.js';
 import { createLogger, type Logger } from './logger.js';
 import { DbPool } from './db/pool.js';
+import type { Db } from './db/index.js';
 import { RepoRegistry } from './registry.js';
 import { Indexer } from './indexer/indexer.js';
 import { Watcher } from './watcher/watcher.js';
@@ -15,6 +16,7 @@ export class App {
   readonly config: Config;
   readonly log: Logger;
   readonly pool: DbPool;
+  readonly db: Db;
   readonly registry: RepoRegistry;
   readonly indexer: Indexer;
   readonly watcher: Watcher;
@@ -40,13 +42,13 @@ export class App {
     mkdirSync(path.dirname(dbPath), { recursive: true });
 
     this.pool = new DbPool(dbPath);
-    const db = this.pool.acquire();
-    this.registry = new RepoRegistry(db);
-    this.indexer = new Indexer(db);
+    this.db = this.pool.acquire();
+    this.registry = new RepoRegistry(this.db);
+    this.indexer = new Indexer(this.db);
     this.watcher = new Watcher({ debounceMs: 300 });
-    this.graph = new InMemoryGraph(db);
+    this.graph = new InMemoryGraph(this.db);
 
-    this.repoId = ensureRepo(db, repoRoot);
+    this.repoId = ensureRepo(this.db, repoRoot);
   }
 
   async start(): Promise<void> {
@@ -100,7 +102,7 @@ export class App {
       : null;
 
     this.mcpServer = new McpServer({
-      db: this.pool.acquire(),
+      db: this.db,
       registry: this.registry,
       indexer: this.indexer,
       aiConfig,
@@ -120,6 +122,7 @@ export class App {
       await this.mcpServer.close();
       this.mcpServer = null;
     }
+    this.pool.release();
     this.pool.close();
   }
 }

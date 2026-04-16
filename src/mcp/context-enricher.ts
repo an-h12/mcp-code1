@@ -43,12 +43,18 @@ export class ContextEnricher {
   }
 
   extractMentions(message: string): string[] {
+    // Strip URLs and emails before matching to avoid false-positive "file" mentions
+    const cleaned = message
+      .replace(/https?:\/\/\S+/g, ' ')
+      .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, ' ');
+
     const raw = [
-      ...message.matchAll(/`([A-Za-z_][A-Za-z0-9_.]*)`/g),
-      ...message.matchAll(/\b([A-Z][a-z]+(?:[A-Z][a-z]+)+)\b/g),
-      ...message.matchAll(/hàm\s+([A-Za-z_]\w*)/g),
-      ...message.matchAll(/function\s+([A-Za-z_]\w*)/g),
-      ...message.matchAll(/([A-Za-z0-9_/.-]+\.[a-z]{2,4})/g),
+      ...cleaned.matchAll(/`([A-Za-z_][A-Za-z0-9_.]*)`/g),
+      ...cleaned.matchAll(/\b([A-Z][a-z]+(?:[A-Z][a-z]+)+)\b/g),
+      ...cleaned.matchAll(/hàm\s+([A-Za-z_]\w*)/g),
+      ...cleaned.matchAll(/function\s+([A-Za-z_]\w*)/g),
+      // File paths: require a path separator before the filename (avoids version/domain)
+      ...cleaned.matchAll(/[/\\]([A-Za-z0-9_.-]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|go|rs|cs|java|cpp|c|h|hpp))\b/g),
     ].map((m) => m[1] as string);
 
     return [...new Set(raw)].slice(0, TOKEN_BUDGET.maxSymbols);

@@ -63,6 +63,7 @@ export function getSymbolContext(
     callers,
     callees,
     impactCount: callers.length + callees.length,
+    blastRadius: callers.length, // "who breaks if I change this" = incoming edges only
     resolvedAs: row.name,
   };
 }

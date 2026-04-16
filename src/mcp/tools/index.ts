@@ -162,7 +162,7 @@ const TOOL_DEFINITIONS: Array<{ name: string; description: string; inputSchema: 
   {
     name: 'get_symbol_context',
     description:
-      'Graph view of a symbol: who calls it (callers) and what it calls (callees), up to BFS depth 3. Use depth=1 for direct callers/callees only. impactCount in response = total callers+callees across all depths, treat >=10 as high blast radius.',
+      'Graph view of a symbol: who calls it (callers, incoming) and what it calls (callees, outgoing), up to BFS depth 3. Use depth=1 for direct only. Response includes blastRadius = callers.length (who breaks if you change this) and impactCount = callers+callees total.',
     inputSchema: {
       type: 'object',
       properties: {
