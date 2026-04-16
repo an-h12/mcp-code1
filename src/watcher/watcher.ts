@@ -1,4 +1,4 @@
-import chokidar from 'chokidar';
+import chokidar, { type FSWatcher } from 'chokidar';
 import { EventEmitter } from 'node:events';
 import { extname } from 'node:path';
 import { supportedExtensions } from '../parser/grammars.js';
@@ -10,7 +10,7 @@ export type WatcherOptions = {
 export type WatcherEvent = 'change' | 'add' | 'unlink' | 'error';
 
 export class Watcher extends EventEmitter {
-  private fsWatcher: chokidar.FSWatcher | null = null;
+  private fsWatcher: FSWatcher | null = null;
   private debounceMs: number;
   private pending = new Map<string, ReturnType<typeof setTimeout>>();
   private supportedExts: Set<string>;
@@ -40,7 +40,7 @@ export class Watcher extends EventEmitter {
         });
       }
 
-      this.fsWatcher.on('error', (err) => this.emit('error', err));
+      this.fsWatcher.on('error', (err: unknown) => this.emit('error', err));
     });
   }
 

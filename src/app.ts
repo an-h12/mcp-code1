@@ -2,12 +2,16 @@ import { loadConfig, type Config } from './config.js';
 import { createLogger, type Logger } from './logger.js';
 import { DbPool } from './db/pool.js';
 import { RepoRegistry } from './registry.js';
+import { Indexer } from './indexer/indexer.js';
+import { Watcher } from './watcher/watcher.js';
 
 export class App {
   readonly config: Config;
   readonly log: Logger;
   readonly pool: DbPool;
   readonly registry: RepoRegistry;
+  readonly indexer: Indexer;
+  readonly watcher: Watcher;
 
   constructor() {
     this.config = loadConfig();
@@ -15,15 +19,27 @@ export class App {
     this.pool = new DbPool(this.config.dbPath);
     const db = this.pool.acquire();
     this.registry = new RepoRegistry(db);
+    this.indexer = new Indexer(db);
+    this.watcher = new Watcher({ debounceMs: 300 });
   }
 
   async start(): Promise<void> {
     this.log.info({ dbPath: this.config.dbPath }, 'App starting');
-    // Plans 2 and 3 will attach subsystems here
+
+    for (const repo of this.registry.list()) {
+      this.log.info({ repo: repo.name }, 'Starting initial index');
+      await this.indexer.indexRepo(repo.id, repo.rootPath);
+      await this.watcher.watch(repo.rootPath);
+      this.watcher.on('change', (path: string) => {
+        this.log.debug({ path }, 'File changed; re-indexing repo');
+        void this.indexer.indexRepo(repo.id, repo.rootPath);
+      });
+    }
   }
 
   async stop(): Promise<void> {
     this.log.info('App stopping');
+    await this.watcher.close();
     this.pool.close();
   }
 }
