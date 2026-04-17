@@ -8,9 +8,11 @@ Server chạy qua **stdio transport**, index codebase bằng tree-sitter (JS/TS/
 
 ## 1. Yêu cầu
 
-- **Node.js ≥ 20** (kèm npm)
+- **Node.js ≥ 20** (kèm npm) — khuyến nghị **Node.js ≥ 22** để dùng prebuilt binary của `better-sqlite3`
 - **VS Code + Cline extension**
 - Windows / macOS / Linux đều chạy được
+
+> ⚠️ **Node.js v24+ trên Windows**: `better-sqlite3` cần prebuilt binary tương thích. Nếu `npm install` báo lỗi `gyp ERR! find VS`, hãy xem mục [Troubleshooting](#9-troubleshooting).
 
 ---
 
@@ -25,9 +27,36 @@ npm run build
 
 Lệnh `npm run build` biên dịch TypeScript ra thư mục `dist/`. File entrypoint là `dist/index.js`.
 
+> 💡 **Nếu `npm install` thành công nhưng `npm run build` báo lỗi `'tsc' is not recognized`**, thì `typescript` chưa được cài vào `node_modules`. Thử lại:
+> ```bash
+> npm install --ignore-scripts
+> npm run build
+> ```
+
 ---
 
-## 3. Biến môi trường
+## 3. Cấu hình môi trường
+
+### Tạo file .env (chạy tay / dev)
+
+Copy file mẫu và chỉnh sửa:
+
+```bash
+cp .env.example .env
+```
+
+Nội dung tối thiểu:
+
+```env
+DB_PATH=./data/mcp-code1.db
+LOG_LEVEL=info
+```
+
+> ⚠️ **File `.env` là bắt buộc khi chạy tay** — nếu thiếu, server crash ngay với lỗi `Config FAIL: DB_PATH Required`.
+
+Khi cấu hình Cline, các biến được truyền qua `env` trong `cline_mcp_settings.json` (xem Mục 5) thay vì file `.env`.
+
+### Tất cả biến môi trường
 
 | Biến | Bắt buộc | Mặc định | Mô tả |
 |---|---|---|---|
@@ -84,20 +113,28 @@ node dist/index.js
 ### Các bước thực hiện đầy đủ (lần đầu)
 
 1. **Cài Node.js ≥ 20** và xác nhận: `node -v`
-2. **Clone & build**:
+2. **Clone & cài dependencies**:
    ```bash
    git clone <repo-url> mcp-code1
    cd mcp-code1
    npm install
+   ```
+3. **Tạo file `.env`**:
+   ```bash
+   cp .env.example .env
+   # Mở .env và điền DB_PATH nếu muốn đổi đường dẫn
+   ```
+4. **Build TypeScript**:
+   ```bash
    npm run build
    ```
-3. **Tạo thư mục chứa DB** (nếu chưa có): ví dụ `mkdir E:\mcp-data`
-4. **Set env** `REPO_ROOT` và `DB_PATH` (xem lệnh theo OS ở trên)
-5. **Chạy thử**: `node dist/index.js`
+5. **Tạo thư mục chứa DB** (nếu chưa có): ví dụ `mkdir E:\mcp-data`
+6. **Set env** `REPO_ROOT` và `DB_PATH` (xem lệnh theo OS ở trên)
+7. **Chạy thử**: `node dist/index.js`
    - Nếu thấy log `App starting` rồi `Initial index complete — graph ready` → OK
    - Process sẽ "treo" chờ input stdio — điều này **bình thường** với MCP. Bấm `Ctrl+C` để tắt.
-6. **Cấu hình Cline** (Mục 5) để Cline tự spawn và giao tiếp
-7. **Restart Cline / VS Code**, kiểm tra tool list trong Cline MCP panel
+8. **Cấu hình Cline** (Mục 5) để Cline tự spawn và giao tiếp
+9. **Restart Cline / VS Code**, kiểm tra tool list trong Cline MCP panel
 
 ### Kiểm tra nhanh server đã ready
 
@@ -230,10 +267,31 @@ File bị bỏ qua tự động: `node_modules/`, `dist/`, `build/`, `.git/`, `*
 
 ---
 
-## 9. Troubleshooting
+## 9. Chạy test
 
-| Lỗi | Cách xử lý |
+```bash
+npm test
+```
+
+Vitest chạy **36 test files / 149 tests** bao gồm:
+
+| Nhóm | Mô tả |
 |---|---|
+| `tests/e2e/` | **E2E**: mô phỏng Cline gọi tất cả 13 tool qua MCP protocol, index fixture TypeScript project thực |
+| `tests/mcp/tools/` | Unit test từng tool handler: search, context graph, import chain, explain với AI mock |
+| `tests/indexer/` | Pass 1 (symbols) + Pass 2 (relations) cho TS / JS / Python; git renames; file hash |
+| `tests/graph/` | BFS, IdMapper, InMemoryGraph load/cache/invalidate/evict/reloadFile |
+| `tests/db/` | Migrations, pool, ensureRepo |
+| `tests/parser/` | tree-sitter extractor, grammars, tokenizer |
+
+---
+
+## 10. Troubleshooting| Lỗi | Cách xử lý |
+|---|---|
+| `Config FAIL: DB_PATH Required` | Thiếu file `.env`. Chạy `cp .env.example .env` rồi điền `DB_PATH`. |
+| `gyp ERR! find VS` khi `npm install` | `better-sqlite3` cần build native. Cách 1: cài **Visual Studio Build Tools** với workload "Desktop development with C++". Cách 2 (nhanh hơn): nâng `better-sqlite3` lên v12+ để dùng prebuilt — `npm install better-sqlite3@^12.9.0`. |
+| `Could not locate the bindings file` (better-sqlite3) | Node.js v24 dùng ABI v137, cần `better-sqlite3 ≥ 12.9.0`. Chạy: `npm install better-sqlite3@^12.9.0` |
+| `'tsc' is not recognized` | TypeScript chưa được cài. Chạy: `npm install --ignore-scripts && npm run build` |
 | `REPO_ROOT does not exist` | Kiểm tra path trong Cline config, dùng absolute path. |
 | Cline không thấy tool | Restart Cline; kiểm tra log MCP trong output panel. Chạy tay (Mục 4B) để xem log chi tiết. |
 | `Cannot find module 'dist/index.js'` | Quên chạy `npm run build`. |
@@ -244,7 +302,7 @@ File bị bỏ qua tự động: `node_modules/`, `dist/`, `build/`, `.git/`, `*
 
 ---
 
-## 10. Kiến trúc (tóm tắt)
+## 11. Kiến trúc (tóm tắt)
 
 ```
 Cline (VS Code)
