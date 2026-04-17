@@ -56,7 +56,13 @@ export async function indexFile(
   }
 
   const source = readFileSync(absPath, 'utf8');
-  const rawSymbols = extractSymbols(source, ext);
+  let rawSymbols: ReturnType<typeof extractSymbols>;
+  try {
+    rawSymbols = extractSymbols(source, ext);
+  } catch {
+    // parser error on this file — record it in DB but with 0 symbols
+    rawSymbols = [];
+  }
 
   const upsertFile = db.transaction((): { symbolsAdded: number; symbolsRemoved: number } => {
     let fileId: string;

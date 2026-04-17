@@ -111,7 +111,13 @@ export function extractSymbols(source: string, ext: string): RawSymbol[] {
   if (!querySource) return [];
 
   const parser = getParser(grammar);
-  const tree = parser.parse(source);
+  let tree: ReturnType<typeof parser.parse>;
+  try {
+    tree = parser.parse(source);
+  } catch {
+    // tree-sitter "Invalid argument" on malformed/binary content — skip file
+    return [];
+  }
 
   // tree-sitter 0.21: Query is constructed from Language + source
   const QueryCtor = (Parser as unknown as { Query: new (lang: unknown, src: string) => unknown })
