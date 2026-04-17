@@ -20,7 +20,7 @@ export function createAiAdapter(config: AiConfig): AiAdapter | null {
   const getClient = async (): Promise<LocalLLMClient> => {
     if (!clientPromise) {
       clientPromise = (async () => {
-        const { default: OpenAI } = await import('openai');
+        const { OpenAI } = await import('openai');
         return new OpenAI({
           apiKey: config.apiKey,
           ...(config.baseUrl ? { baseURL: config.baseUrl } : {}),
