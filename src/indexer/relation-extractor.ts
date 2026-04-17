@@ -191,7 +191,9 @@ export class RelationExtractor {
       const importName = m.captures.find((c) => c.name === 'import.name' || c.name === 'import.module');
       const extendsName = m.captures.find((c) => c.name === 'extends.name' || c.name === 'base.name');
       const implementsName = m.captures.find((c) => c.name === 'implements.name');
-      const callName = m.captures.find((c) => c.name === 'call.name');
+      const callName = m.captures.find(
+        (c) => c.name === 'call.name' || c.name === 'call.constructor',
+      );
 
       if (importPath || importName) {
         const target = (importPath ?? importName)!;
@@ -246,11 +248,32 @@ export class RelationExtractor {
         if (!sourceId) continue;
         const name = extendsName.node.text;
         const targetId = moduleMap.findSymbol(name);
+
+        // C# heuristic: tree-sitter cannot distinguish base class from
+        // interface in a base_list at the syntactic level (both live inside
+        // `base_list`). Use the strong C# naming convention where interfaces
+        // start with `I` followed by an uppercase letter to split the edge
+        // into EXTENDS vs IMPLEMENTS. If the DB already has a matching symbol
+        // of kind='interface' we trust it; otherwise we fall back to the
+        // convention. False positives are rare in idiomatic C# code.
+        let edgeType: 'EXTENDS' | 'IMPLEMENTS' = 'EXTENDS';
+        if (grammar.name === 'csharp') {
+          let looksLikeInterface = /^I[A-Z]/.test(name);
+          if (targetId) {
+            const row = this.db
+              .prepare(`SELECT kind FROM symbols WHERE id = ?`)
+              .get(targetId) as { kind: string } | undefined;
+            if (row?.kind === 'interface') looksLikeInterface = true;
+            else if (row?.kind === 'class') looksLikeInterface = false;
+          }
+          if (looksLikeInterface) edgeType = 'IMPLEMENTS';
+        }
+
         edges.push({
           sourceId,
           targetName: name,
           targetId,
-          type: 'EXTENDS',
+          type: edgeType,
           language: grammar.name,
         });
         continue;

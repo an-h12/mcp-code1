@@ -222,6 +222,130 @@ public partial class Foo
     expect(count).toBeDefined();
   });
 
+  it('extracts event field `public event EventHandler Changed;`', async () => {
+    const { extractSymbols } = await import('../../src/parser/extractor.js');
+    const src = `public class Publisher {
+    public event System.EventHandler Changed;
+    public event System.EventHandler<int> ValueChanged;
+}
+`;
+    const symbols = extractSymbols(src, '.cs');
+    const names = symbols.map((s) => s.name);
+    expect(names).toContain('Changed');
+    expect(names).toContain('ValueChanged');
+    const changed = symbols.find((s) => s.name === 'Changed');
+    expect(changed?.kind).toBe('variable');
+  });
+
+  it('extracts event property with add/remove accessors', async () => {
+    const { extractSymbols } = await import('../../src/parser/extractor.js');
+    const src = `public class P {
+    public event System.EventHandler Renamed {
+        add { }
+        remove { }
+    }
+}
+`;
+    const symbols = extractSymbols(src, '.cs');
+    const renamed = symbols.find((s) => s.name === 'Renamed');
+    expect(renamed).toBeDefined();
+    expect(renamed?.kind).toBe('variable');
+  });
+
+  it('extracts indexer with fallback name "this"', async () => {
+    const { extractSymbols } = await import('../../src/parser/extractor.js');
+    const src = `public class Collection {
+    public int this[int i] { get => 0; set { } }
+}`;
+    const symbols = extractSymbols(src, '.cs');
+    const indexer = symbols.find((s) => s.name === 'this' && s.kind === 'method');
+    expect(indexer).toBeDefined();
+  });
+
+  it('extracts operator overload with fallback name', async () => {
+    const { extractSymbols } = await import('../../src/parser/extractor.js');
+    const src = `public class Vec {
+    public static Vec operator+(Vec a, Vec b) => a;
+    public static Vec operator-(Vec a, Vec b) => a;
+}`;
+    const symbols = extractSymbols(src, '.cs');
+    const names = symbols.map((s) => s.name);
+    expect(names).toContain('operator +');
+    expect(names).toContain('operator -');
+  });
+
+  it('extracts conversion operator (implicit/explicit)', async () => {
+    const { extractSymbols } = await import('../../src/parser/extractor.js');
+    const src = `public class Money {
+    public static implicit operator decimal(Money m) => 0m;
+    public static explicit operator int(Money m) => 0;
+}`;
+    const symbols = extractSymbols(src, '.cs');
+    const names = symbols.map((s) => s.name);
+    expect(names).toContain('implicit operator decimal');
+    expect(names).toContain('explicit operator int');
+  });
+
+  it('extracts destructor / finalizer', async () => {
+    const { extractSymbols } = await import('../../src/parser/extractor.js');
+    const src = `public class Resource {
+    public Resource() { }
+    ~Resource() { }
+}`;
+    const symbols = extractSymbols(src, '.cs');
+    // Destructor `~Resource` emits name "Resource" (identifier after ~),
+    // kind=method. There should now be 2 method symbols named "Resource":
+    // constructor + destructor.
+    const methods = symbols.filter((s) => s.name === 'Resource' && s.kind === 'method');
+    expect(methods.length).toBe(2);
+  });
+
+  it('extracts local functions inside methods', async () => {
+    const { extractSymbols } = await import('../../src/parser/extractor.js');
+    const src = `public class App {
+    public void Run() {
+        int Helper(int x) => x + 1;
+        void Another() { }
+        Helper(1);
+    }
+}`;
+    const symbols = extractSymbols(src, '.cs');
+    const names = symbols.map((s) => s.name);
+    expect(names).toContain('Helper');
+    expect(names).toContain('Another');
+    const helper = symbols.find((s) => s.name === 'Helper');
+    expect(helper?.kind).toBe('function');
+  });
+
+  it('extracts record positional parameters as property-like symbols', async () => {
+    const { extractSymbols } = await import('../../src/parser/extractor.js');
+    const src = `public record Money(decimal Amount, string Currency);
+public record Customer(System.Guid Id, string Name, int Age);
+`;
+    const symbols = extractSymbols(src, '.cs');
+    const names = symbols.map((s) => s.name);
+    expect(names).toContain('Amount');
+    expect(names).toContain('Currency');
+    expect(names).toContain('Name');
+    expect(names).toContain('Age');
+    const amount = symbols.find((s) => s.name === 'Amount');
+    expect(amount?.kind).toBe('variable');
+  });
+
+  it('does NOT emit method parameters as symbols (only record params)', async () => {
+    const { extractSymbols } = await import('../../src/parser/extractor.js');
+    const src = `public class Calc {
+    public int Sum(int a, int b) => a + b;
+}`;
+    const symbols = extractSymbols(src, '.cs');
+    const names = symbols.map((s) => s.name);
+    // Method parameters should NOT appear — only the class + method.
+    expect(names).not.toContain('a');
+    expect(names).not.toContain('b');
+    expect(names).toContain('Calc');
+    expect(names).toContain('Sum');
+  });
+
   it('large file: handles many symbols without crashing', async () => {
     const { extractSymbols } = await import('../../src/parser/extractor.js');
     // Generate a file with 200 classes each with a method.

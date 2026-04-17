@@ -18,3 +18,34 @@
 
 ; C# 10+ file-scoped namespace: `namespace Foo.Bar;`
 (file_scoped_namespace_declaration name: [(identifier) (qualified_name)] @name) @symbol
+
+; event property: `public event EventHandler E { add; remove; }`
+(event_declaration name: (identifier) @name) @symbol
+
+; event field: `public event EventHandler Changed;`
+(event_field_declaration
+  (variable_declaration
+    (variable_declarator
+      name: (identifier) @name))) @symbol
+
+; indexer: `public int this[int i] { get; set; }` — no name field; extractor
+; falls back to the literal "this".
+(indexer_declaration) @symbol
+
+; operator overloads: `public static C operator+(C a, C b)` — extractor parses
+; the token from the source to form "operator +" / "implicit operator int".
+(operator_declaration) @symbol
+(conversion_operator_declaration) @symbol
+
+; destructor / finalizer: `~ClassName() { }`
+(destructor_declaration name: (identifier) @name) @symbol
+
+; local functions inside a method body: `int Helper() => 1;`
+(local_function_statement name: (identifier) @name) @symbol
+
+; record positional parameters: `record Money(decimal Amount, string Currency)`
+; become property-like symbols of the record type. Class primary constructors
+; (C# 12 `class C(int x)`) are skipped — they are ctor params, not public API.
+(record_declaration
+  (parameter_list
+    (parameter name: (identifier) @name) @symbol.record_param))

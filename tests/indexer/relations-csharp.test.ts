@@ -221,6 +221,44 @@ public class Service
     rmSync(dir, { recursive: true, force: true });
   });
 
+  it('C#: IMPLEMENTS vs EXTENDS heuristic distinguishes `IFoo` from `Base`', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mcp-cs-impl-'));
+    writeFileSync(
+      join(dir, 'X.cs'),
+      `public class Base { }
+public interface IOne { }
+public interface ITwo { }
+public class Derived : Base, IOne, ITwo { }
+`,
+    );
+    const edges = await indexAndQueryEdges(dir);
+    const derivedEdges = edges.filter((e) => e.src === 'Derived');
+    const extendsBase = derivedEdges.find((e) => e.type === 'EXTENDS' && e.tgt === 'Base');
+    const impOne = derivedEdges.find((e) => e.type === 'IMPLEMENTS' && e.tgt === 'IOne');
+    const impTwo = derivedEdges.find((e) => e.type === 'IMPLEMENTS' && e.tgt === 'ITwo');
+    expect(extendsBase).toBeDefined();
+    expect(impOne).toBeDefined();
+    expect(impTwo).toBeDefined();
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('C#: IMPLEMENTS heuristic trusts DB kind over naming when both available', async () => {
+    // `Idea` starts with 'I' but not followed by uppercase — should be EXTENDS.
+    // `Animal` class starts with uppercase — should be EXTENDS.
+    const dir = mkdtempSync(join(tmpdir(), 'mcp-cs-impl2-'));
+    writeFileSync(
+      join(dir, 'X.cs'),
+      `public class Idea { }
+public class Dog : Idea { }
+`,
+    );
+    const edges = await indexAndQueryEdges(dir);
+    const e = edges.find((r) => r.src === 'Dog');
+    expect(e?.type).toBe('EXTENDS');
+    expect(e?.tgt).toBe('Idea');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it('C#: re-index does NOT duplicate relations (persist DELETE-before-INSERT)', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'mcp-cs-reindex-'));
     writeFileSync(
@@ -251,23 +289,64 @@ public class Service
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('C# KNOWN GAP: `new Foo()` (object_creation_expression) currently NOT tracked as CALLS', async () => {
-    // relations-csharp.scm captures `@call.constructor`, but RelationExtractor
-    // only recognises `call.name`. This test DOCUMENTS the gap so a future fix
-    // (add call.constructor check, or rename capture) is testable.
+  it('C#: generic base `class X : Base<T,U>` captures only the type name, not the generics', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mcp-cs-genbase-'));
+    writeFileSync(
+      join(dir, 'Repo.cs'),
+      `public class BaseRepository<TEntity, TId> { }
+public class CustomerRepo : BaseRepository<Customer, System.Guid> { }
+public class Customer { }
+`,
+    );
+    const edges = await indexAndQueryEdges(dir);
+    const edge = edges.find(
+      (e) => e.type === 'EXTENDS' && e.src === 'CustomerRepo',
+    );
+    expect(edge).toBeDefined();
+    // Must be exactly "BaseRepository" — not "BaseRepository<Customer, System.Guid>"
+    expect(edge?.tgt).toBe('BaseRepository');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('C#: record inherit `record Dog(string N) : Animal(N)` captures base class name', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'mcp-cs-recinherit-'));
+    writeFileSync(
+      join(dir, 'R.cs'),
+      `public record Animal(string Name);
+public record Dog(string Name) : Animal(Name);
+`,
+    );
+    const edges = await indexAndQueryEdges(dir);
+    const edge = edges.find(
+      (e) => e.type === 'EXTENDS' && e.src === 'Dog',
+    );
+    expect(edge).toBeDefined();
+    expect(edge?.tgt).toBe('Animal');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('C#: `new Foo()` (object_creation_expression) emits CALLS edge', async () => {
+    // Fixed in P0-2: RelationExtractor now recognises `call.constructor` capture
+    // emitted by relations-csharp.scm for object_creation_expression.
     const dir = mkdtempSync(join(tmpdir(), 'mcp-cs-newexpr-'));
     writeFileSync(
       join(dir, 'App.cs'),
       `public class Foo { }
-public class App { public void Run() { var f = new Foo(); } }
+
+public class App
+{
+    public void Run()
+    {
+        var f = new Foo();
+    }
+}
 `,
     );
     const edges = await indexAndQueryEdges(dir);
     const newFoo = edges.find(
       (e) => e.type === 'CALLS' && e.src === 'Run' && e.tgt === 'Foo',
     );
-    // Currently undefined; flip this assertion when the gap is fixed.
-    expect(newFoo).toBeUndefined();
+    expect(newFoo).toBeDefined();
     rmSync(dir, { recursive: true, force: true });
   });
 

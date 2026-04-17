@@ -14,7 +14,32 @@
 (object_creation_expression
   type: (identifier) @call.constructor) @call.new
 
-; class/record/struct inheritance — base_list is flat
+; class/record/struct inheritance — base_list entries can be a plain identifier,
+; a generic_name (e.g. BaseRepository<T, U>), or a primary_constructor_base_type
+; (C# 10+ record inherit like `: Animal(Name)`). We only want the outer type
+; identifier, NOT the full generic_name text or the ctor args.
 (class_declaration
-  name: (identifier) @class.name
-  (base_list (_) @base.name)) @class.base
+  (base_list [
+    (identifier)                                                @base.name
+    (generic_name                    (identifier) @base.name)
+    (primary_constructor_base_type   (identifier) @base.name)
+  ])) @class.base
+
+(struct_declaration
+  (base_list [
+    (identifier)                                                @base.name
+    (generic_name                    (identifier) @base.name)
+  ])) @struct.base
+
+(record_declaration
+  (base_list [
+    (identifier)                                                @base.name
+    (generic_name                    (identifier) @base.name)
+    (primary_constructor_base_type   (identifier) @base.name)
+  ])) @record.base
+
+(interface_declaration
+  (base_list [
+    (identifier)                                                @base.name
+    (generic_name                    (identifier) @base.name)
+  ])) @interface.base
