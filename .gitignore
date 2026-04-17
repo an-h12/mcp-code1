@@ -38,3 +38,10 @@ bin/roslyn/*
 # Ad-hoc probe / scratch files
 probe-*.mjs
 scratch.*
+
+# Example / demo files
+test-all-tools.mjs
+test-samples/
+UsersHahaAppDataLocalTempcs-demo/
+AGENTS.md
+CLAUDE.md
