@@ -1,6 +1,6 @@
 /**
  * Test cho explainSymbol với AI adapter mock.
- * Mô phỏng kịch bản: user cấu hình local LLM (Ollama/LM Studio) qua OpenAI-compatible API.
+ * Mô phỏng kịch bản: user cấu hình local LLM (Ollama/LM Studio) qua AI_API_BASE_URL.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { openDb } from '../../../src/db/index.js';

@@ -1,5 +1,5 @@
 /**
- * Live LLM integration test — gọi thật endpoint OpenAI-compatible.
+ * Live LLM integration test — gọi thật endpoint local LLM (Ollama/LM Studio).
  *
  * TỰ SKIP khi không có env vars (default behavior).
  *
@@ -11,7 +11,7 @@
  *   npm test -- tests/live-llm.test.ts
  *
  * Nếu Cline của bạn chỉ cung cấp API token (không có baseUrl), hãy hỏi
- * admin / provider của token đó để biết endpoint OpenAI-compatible.
+ * admin / provider của token đó để biết endpoint local LLM.
  */
 import { describe, it, expect, beforeAll } from 'vitest';
 import { openDb } from '../src/db/index.js';
@@ -52,7 +52,7 @@ describeLive('Live LLM integration (AI_API_KEY set)', () => {
     const adapter = createAiAdapter({
       apiKey: process.env['AI_API_KEY']!,
       baseUrl: process.env['AI_API_BASE_URL'] ?? '',
-      model: process.env['AI_MODEL'] ?? 'gpt-4o-mini',
+      model: process.env['AI_MODEL'] ?? 'qwen2.5-coder',
     });
     expect(adapter).not.toBeNull();
     expect(typeof adapter!.explain).toBe('function');
@@ -62,7 +62,7 @@ describeLive('Live LLM integration (AI_API_KEY set)', () => {
     const adapter = createAiAdapter({
       apiKey: process.env['AI_API_KEY']!,
       baseUrl: process.env['AI_API_BASE_URL'] ?? '',
-      model: process.env['AI_MODEL'] ?? 'gpt-4o-mini',
+      model: process.env['AI_MODEL'] ?? 'qwen2.5-coder',
     });
     expect(adapter).not.toBeNull();
 
@@ -82,7 +82,7 @@ describeLive('Live LLM integration (AI_API_KEY set)', () => {
     const adapter = createAiAdapter({
       apiKey: process.env['AI_API_KEY']!,
       baseUrl: process.env['AI_API_BASE_URL'] ?? '',
-      model: process.env['AI_MODEL'] ?? 'gpt-4o-mini',
+      model: process.env['AI_MODEL'] ?? 'qwen2.5-coder',
     });
 
     const text = await explainSymbol(db, symbolId, adapter);
@@ -94,7 +94,7 @@ describeLive('Live LLM integration (AI_API_KEY set)', () => {
     const adapter = createAiAdapter({
       apiKey: process.env['AI_API_KEY']!,
       baseUrl: process.env['AI_API_BASE_URL'] ?? '',
-      model: process.env['AI_MODEL'] ?? 'gpt-4o-mini',
+      model: process.env['AI_MODEL'] ?? 'qwen2.5-coder',
     });
 
     const longContext = 'class Foo { method() {} }\n'.repeat(100);

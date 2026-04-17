@@ -24,7 +24,7 @@ describe('loadConfig', () => {
     expect(config.dbPath).toBe('./test.db');
     expect(config.mcpPort).toBe(3000);
     expect(config.uiPort).toBe(3001);
-    expect(config.aiModel).toBe('gpt-4o-mini');
+    expect(config.aiModel).toBe('qwen2.5-coder');
   });
 
   it('throws when DB_PATH is missing', async () => {

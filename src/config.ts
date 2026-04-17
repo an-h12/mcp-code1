@@ -8,7 +8,7 @@ const EnvSchema = z.object({
   UI_PORT: z.coerce.number().int().min(1024).max(65535).default(3001),
   AI_API_KEY: z.string().default(''),
   AI_API_BASE_URL: z.string().default(''),
-  AI_MODEL: z.string().default('gpt-4o-mini'),
+  AI_MODEL: z.string().default('qwen2.5-coder'),
 });
 
 export type Config = {
@@ -24,7 +24,7 @@ export type Config = {
 export function loadConfig(): Config {
   const parsed = EnvSchema.parse(process.env);
   // Zod's `.default('')` treats explicit '' as valid; but coerce empty AI_MODEL to default
-  const aiModel = parsed.AI_MODEL === '' ? 'gpt-4o-mini' : parsed.AI_MODEL;
+  const aiModel = parsed.AI_MODEL === '' ? 'qwen2.5-coder' : parsed.AI_MODEL;
   return {
     dbPath: parsed.DB_PATH,
     logLevel: parsed.LOG_LEVEL,

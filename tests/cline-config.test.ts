@@ -90,12 +90,12 @@ describe('Cline config validation', () => {
       // aiConfig sẽ được tạo null trong App → explain_symbol fallback về raw metadata
     });
 
-    it('AI_MODEL empty string fallback về gpt-4o-mini default', async () => {
+    it('AI_MODEL empty string fallback về qwen2.5-coder default', async () => {
       process.env['DB_PATH'] = './data/db.sqlite';
       process.env['AI_MODEL'] = '';
       const { loadConfig } = await import('../src/config.js');
       const cfg = loadConfig();
-      expect(cfg.aiModel).toBe('gpt-4o-mini');
+      expect(cfg.aiModel).toBe('qwen2.5-coder');
     });
   });
 

@@ -9,15 +9,15 @@ export type AiAdapter = {
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type OpenAIClient = any;
-let clientPromise: Promise<OpenAIClient> | null = null;
+type LocalLLMClient = any;
+let clientPromise: Promise<LocalLLMClient> | null = null;
 
 export function createAiAdapter(config: AiConfig): AiAdapter | null {
   if (!config.apiKey) return null;
 
   // MEDIUM #8: cache the client across explain() calls to avoid leaking
   // HTTP agents / connection pools per tool invocation.
-  const getClient = async (): Promise<OpenAIClient> => {
+  const getClient = async (): Promise<LocalLLMClient> => {
     if (!clientPromise) {
       clientPromise = (async () => {
         const { default: OpenAI } = await import('openai');
@@ -34,7 +34,7 @@ export function createAiAdapter(config: AiConfig): AiAdapter | null {
     async explain(context, question) {
       const client = await getClient();
       const res = await client.chat.completions.create({
-        model: config.model || 'gpt-4o-mini',
+        model: config.model || 'qwen2.5-coder',
         messages: [
           { role: 'system', content: 'You are a code intelligence assistant. Answer concisely.' },
           { role: 'user', content: `Context:\n${context}\n\nQuestion: ${question}` },

@@ -134,7 +134,7 @@ const TOOL_DEFINITIONS: Array<{ name: string; description: string; inputSchema: 
   {
     name: 'explain_symbol',
     description:
-      'AI-generated natural-language explanation of a symbol. Requires AI_API_KEY env var (local LLM via OpenAI-compatible API); falls back to raw metadata if not configured. Prefer get_symbol_detail for pure metadata.',
+      'AI-generated natural-language explanation of a symbol. Requires AI_API_KEY env var (local LLM via AI_API_BASE_URL); falls back to raw metadata if not configured. Prefer get_symbol_detail for pure metadata.',
     inputSchema: {
       type: 'object',
       properties: { symbol_id: { type: 'string' } },
