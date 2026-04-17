@@ -78,10 +78,9 @@ describe('Reliability: concurrent reindex', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('xóa file → DB giữ entry cũ (known limitation — Watcher emit "unlink" mới trigger cleanup)', async () => {
-    // Note: indexRepo() chỉ walk filesystem để add/update symbol.
-    // Xóa file cần Watcher bắt "unlink" event rồi gọi riêng logic cleanup —
-    // test này document hành vi hiện tại để tránh regression.
+  it('xóa file → indexRepo tự cleanup orphan rows (P0 fix: close/reopen use case)', async () => {
+    // Khi user xóa file lúc MCP server / VS Code đóng, lần start kế tiếp
+    // indexRepo() phải phát hiện file đã biến mất và xóa row + symbols (cascade).
     const dir = mkFixture();
     const db = openDb(':memory:');
     const registry = new RepoRegistry(db);
@@ -101,14 +100,19 @@ describe('Reliability: concurrent reindex', () => {
     unlinkSync(join(dir, 'bar.ts'));
     await indexer.indexRepo(repo.id, dir);
 
-    // Known behavior: indexRepo KHÔNG cleanup file đã xóa — vẫn còn trong DB
+    // New behavior: orphan file + its symbols are cleaned up (FK CASCADE)
     const afterCount = db
       .prepare(
         `SELECT COUNT(*) as c FROM symbols s JOIN files f ON f.id = s.file_id
          WHERE s.repo_id = ? AND f.rel_path = 'bar.ts'`,
       )
       .get(repo.id) as { c: number };
-    expect(afterCount.c).toBe(beforeCount.c); // stale — test documents limitation
+    expect(afterCount.c).toBe(0);
+
+    const fileRow = db
+      .prepare(`SELECT COUNT(*) as c FROM files WHERE repo_id = ? AND rel_path = 'bar.ts'`)
+      .get(repo.id) as { c: number };
+    expect(fileRow.c).toBe(0);
 
     db.close();
     rmSync(dir, { recursive: true, force: true });

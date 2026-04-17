@@ -1,10 +1,12 @@
 import type Database from 'better-sqlite3';
 import { version as v1, name as n1, up as up1 } from './001_initial.js';
 import { version as v2, name as n2, up as up2 } from './002_relations.js';
+import { version as v3, name as n3, up as up3 } from './003_extractor_version.js';
 
 const MIGRATIONS = [
   { version: v1, name: n1, up: up1 },
   { version: v2, name: n2, up: up2 },
+  { version: v3, name: n3, up: up3 },
 ] as const;
 
 export function runMigrations(db: Database.Database): void {

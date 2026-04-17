@@ -5,6 +5,16 @@ import type { Db } from '../db/index.js';
 import { extractSymbols } from '../parser/extractor.js';
 import { hashFile } from './file-hash.js';
 
+/**
+ * Bump this integer whenever the symbol extractor output format changes in a
+ * way that invalidates previously cached rows: grammar upgrade, query file
+ * change, kind-mapping change, new/removed fields on raw symbols, etc.
+ *
+ * The indexer compares this against the `extractor_version` column stored per
+ * file. A mismatch forces a re-parse even if the SHA-256 content hash matches.
+ */
+export const EXTRACTOR_VERSION = 1;
+
 export type IndexFileResult = {
   filePath: string;
   skipped: boolean;
@@ -15,6 +25,7 @@ export type IndexFileResult = {
 type FileRow = {
   id: string;
   hash: string;
+  extractor_version: number;
 };
 
 /**
@@ -37,10 +48,10 @@ export async function indexFile(
   const hash = hashFile(absPath);
 
   const existing = db
-    .prepare(`SELECT id, hash FROM files WHERE repo_id = ? AND rel_path = ?`)
+    .prepare(`SELECT id, hash, extractor_version FROM files WHERE repo_id = ? AND rel_path = ?`)
     .get(repoId, relPath) as FileRow | undefined;
 
-  if (existing && existing.hash === hash) {
+  if (existing && existing.hash === hash && existing.extractor_version === EXTRACTOR_VERSION) {
     return { filePath: absPath, skipped: true, symbolsAdded: 0, symbolsRemoved: 0 };
   }
 
@@ -53,16 +64,24 @@ export async function indexFile(
 
     if (existing) {
       db.prepare(
-        `UPDATE files SET hash = ?, indexed_at = datetime('now'), size_bytes = ? WHERE id = ?`,
-      ).run(hash, statSync(absPath).size, existing.id);
+        `UPDATE files SET hash = ?, extractor_version = ?, indexed_at = datetime('now'), size_bytes = ? WHERE id = ?`,
+      ).run(hash, EXTRACTOR_VERSION, statSync(absPath).size, existing.id);
       removed = db.prepare(`DELETE FROM symbols WHERE file_id = ?`).run(existing.id).changes;
       fileId = existing.id;
     } else {
       fileId = randomUUID();
       db.prepare(
-        `INSERT INTO files (id, repo_id, rel_path, language, size_bytes, hash, indexed_at)
-         VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`,
-      ).run(fileId, repoId, relPath, ext.slice(1), statSync(absPath).size, hash);
+        `INSERT INTO files (id, repo_id, rel_path, language, size_bytes, hash, extractor_version, indexed_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+      ).run(
+        fileId,
+        repoId,
+        relPath,
+        ext.slice(1),
+        statSync(absPath).size,
+        hash,
+        EXTRACTOR_VERSION,
+      );
     }
 
     const insertStmt = db.prepare(

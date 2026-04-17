@@ -91,17 +91,42 @@ export class App {
     this.watcher.on('error', (err: unknown) => {
       this.log.error({ err }, 'Watcher error');
     });
-    // CRITICAL #1: invalidate graph cache after reindex so get_symbol_context sees fresh data
-    this.watcher.on('change', (filePath: string) => {
-      this.log.debug({ filePath }, 'File changed — re-indexing');
+
+    const reindexOne = (filePath: string): void => {
       this.indexer
-        .indexRepo(this.repoId, this.repoRoot)
+        .indexSingleFile(this.repoId, filePath, this.repoRoot)
         .then(() => {
           this.graph.invalidate(this.repoId);
         })
         .catch((err: unknown) => {
-          this.log.error({ err, filePath }, 'Re-index after file change failed');
+          this.log.error({ err, filePath }, 'Single-file re-index failed');
         });
+    };
+
+    // CRITICAL #1: invalidate graph cache after reindex so get_symbol_context sees fresh data
+    this.watcher.on('change', (filePath: string) => {
+      this.log.debug({ filePath }, 'File changed — re-indexing single file');
+      reindexOne(filePath);
+    });
+
+    // P0 #2: handle file creation — previously dropped
+    this.watcher.on('add', (filePath: string) => {
+      this.log.debug({ filePath }, 'File added — indexing');
+      reindexOne(filePath);
+    });
+
+    // P0 #2: handle file deletion — previously left orphan symbols in DB
+    this.watcher.on('unlink', (filePath: string) => {
+      this.log.debug({ filePath }, 'File removed — cleaning up index');
+      try {
+        const relPath = path.sep === '\\'
+          ? path.relative(this.repoRoot, filePath).split('\\').join('/')
+          : path.relative(this.repoRoot, filePath);
+        this.indexer.removeFile(this.repoId, relPath);
+        this.graph.invalidate(this.repoId);
+      } catch (err: unknown) {
+        this.log.error({ err, filePath }, 'removeFile failed');
+      }
     });
 
     const aiConfig: AiConfig | null = this.config.aiApiKey
