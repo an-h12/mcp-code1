@@ -1,8 +1,4 @@
-import type { Server as McpSdkServer } from '@modelcontextprotocol/sdk/server/index.js';
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from '@modelcontextprotocol/sdk/types.js';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { McpServerOptions } from '../server.js';
 import {
   SearchSymbolsSchema,
@@ -34,258 +30,192 @@ import { getImportChain } from './get-import-chain.js';
 import { createAiAdapter } from '../ai-adapter.js';
 import { isAppError } from '../../errors.js';
 
-type JsonSchema = {
-  type: 'object';
-  properties: Record<string, unknown>;
-  required?: string[];
-};
+function errText(e: unknown): string {
+  return isAppError(e) ? `[${e.code}] ${e.message}` : String(e);
+}
 
-const TOOL_DEFINITIONS: Array<{ name: string; description: string; inputSchema: JsonSchema }> = [
-  {
-    name: 'search_symbols',
-    description:
-      'Fuzzy/FTS5 search for symbols by keyword or partial name. Returns multiple ranked matches. Use when you do NOT know the exact name; use find_references for exact lookup.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        query: { type: 'string', description: 'Symbol name or keyword to search for' },
-        repo_id: { type: ['string', 'null'], description: 'Optional repo filter' },
-        kind: { type: ['string', 'null'], description: 'Symbol kind filter (function, class, ...)' },
-        limit: { type: 'integer', minimum: 1, maximum: 100, default: 20 },
-      },
-      required: ['query'],
-    },
-  },
-  {
-    name: 'get_symbol_detail',
-    description:
-      'Metadata-only lookup by symbol UUID: file path, line range, signature, kind. Does NOT include callers/callees (use get_symbol_context for graph). Does NOT call AI (use explain_symbol for AI summary).',
-    inputSchema: {
-      type: 'object',
-      properties: { symbol_id: { type: 'string' } },
-      required: ['symbol_id'],
-    },
-  },
-  {
-    name: 'list_repos',
-    description: 'List all registered repositories.',
-    inputSchema: { type: 'object', properties: {} },
-  },
-  {
-    name: 'register_repo',
-    description: 'Register a new repository for indexing.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        name: { type: 'string' },
-        root_path: { type: 'string' },
-        language: { type: 'string' },
-      },
-      required: ['name', 'root_path'],
-    },
-  },
-  {
-    name: 'index_repo',
-    description: 'Trigger indexing of a repository.',
-    inputSchema: {
-      type: 'object',
-      properties: { repo_id: { type: 'string' } },
-      required: ['repo_id'],
-    },
-  },
-  {
-    name: 'find_references',
-    description:
-      'Exact-name lookup: returns every location where this exact symbol name appears (definitions + uses). Use search_symbols for fuzzy/keyword search.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        symbol_name: { type: 'string' },
-        repo_id: { type: ['string', 'null'] },
-      },
-      required: ['symbol_name'],
-    },
-  },
-  {
-    name: 'search_files',
-    description: 'Search for files by path fragment.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        query: { type: 'string' },
-        repo_id: { type: ['string', 'null'] },
-        limit: { type: 'integer', minimum: 1, maximum: 200, default: 50 },
-      },
-      required: ['query'],
-    },
-  },
-  {
-    name: 'get_file_symbols',
-    description: 'Get all symbols in a specific file.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        repo_id: { type: 'string' },
-        rel_path: { type: 'string' },
-      },
-      required: ['repo_id', 'rel_path'],
-    },
-  },
-  {
-    name: 'explain_symbol',
-    description:
-      'AI-generated natural-language explanation of a symbol. Requires AI_API_KEY env var (local LLM via AI_API_BASE_URL); falls back to raw metadata if not configured. Prefer get_symbol_detail for pure metadata.',
-    inputSchema: {
-      type: 'object',
-      properties: { symbol_id: { type: 'string' } },
-      required: ['symbol_id'],
-    },
-  },
-  {
-    name: 'get_repo_stats',
-    description: 'Get indexing statistics for a repository.',
-    inputSchema: {
-      type: 'object',
-      properties: { repo_id: { type: 'string' } },
-      required: ['repo_id'],
-    },
-  },
-  {
-    name: 'remove_repo',
-    description: 'Remove a repository from the registry.',
-    inputSchema: {
-      type: 'object',
-      properties: { repo_id: { type: 'string' } },
-      required: ['repo_id'],
-    },
-  },
-  {
-    name: 'get_symbol_context',
-    description:
-      'Graph view of a symbol: who calls it (callers, incoming) and what it calls (callees, outgoing), up to BFS depth 3. Use depth=1 for direct only. Response includes blastRadius = callers.length (who breaks if you change this) and impactCount = callers+callees total.',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        symbol_name: { type: 'string' },
-        depth: { type: 'integer', minimum: 1, maximum: 3, default: 2 },
-      },
-      required: ['symbol_name'],
-    },
-  },
-  {
-    name: 'get_import_chain',
-    description: 'Get the import dependency chain starting from a file (IMPORTS edges, BFS).',
-    inputSchema: {
-      type: 'object',
-      properties: {
-        file_path: { type: 'string' },
-        depth: { type: 'integer', minimum: 1, maximum: 5, default: 3 },
-      },
-      required: ['file_path'],
-    },
-  },
-];
-
-export function registerToolHandlers(server: McpSdkServer, opts: McpServerOptions): void {
+export function registerTools(server: McpServer, opts: McpServerOptions): void {
   const ai = opts.aiConfig ? createAiAdapter(opts.aiConfig) : null;
 
-  server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: TOOL_DEFINITIONS,
-  }));
+  // ── Read-only tools ──────────────────────────────────────────
 
-  server.setRequestHandler(CallToolRequestSchema, async (req) => {
-    const { name, arguments: args } = req.params;
-
+  server.registerTool('search_symbols', {
+    description:
+      'Fuzzy/FTS5 search for symbols by keyword or partial name. Returns multiple ranked matches. Use when you do NOT know the exact name; use find_references for exact lookup.',
+    inputSchema: SearchSymbolsSchema,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async ({ query, repo_id, kind, limit, offset }) => {
     try {
-      switch (name) {
-        case 'search_symbols': {
-          const p = SearchSymbolsSchema.parse(args);
-          const results = searchSymbols(opts.db, {
-            query: p.query,
-            repoId: p.repo_id ?? null,
-            kind: p.kind ?? null,
-            limit: p.limit,
-          });
-          return { content: [{ type: 'text', text: JSON.stringify(results, null, 2) }] };
-        }
-        case 'get_symbol_detail': {
-          const p = GetSymbolDetailSchema.parse(args);
-          const detail = getSymbolDetail(opts.db, p.symbol_id);
-          return { content: [{ type: 'text', text: JSON.stringify(detail, null, 2) }] };
-        }
-        case 'list_repos': {
-          const repos = listRepos(opts.registry);
-          return { content: [{ type: 'text', text: JSON.stringify(repos, null, 2) }] };
-        }
-        case 'register_repo': {
-          const p = RegisterRepoSchema.parse(args);
-          const repo = registerRepo(opts.registry, {
-            name: p.name,
-            rootPath: p.root_path,
-            ...(p.language ? { language: p.language } : {}),
-          });
-          return { content: [{ type: 'text', text: JSON.stringify(repo, null, 2) }] };
-        }
-        case 'index_repo': {
-          const p = IndexRepoSchema.parse(args);
-          const result = await indexRepo(opts.registry, opts.indexer, p.repo_id);
-          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-        }
-        case 'find_references': {
-          const p = FindReferencesSchema.parse(args);
-          const refs = findReferences(opts.db, {
-            symbolName: p.symbol_name,
-            repoId: p.repo_id ?? null,
-          });
-          return { content: [{ type: 'text', text: JSON.stringify(refs, null, 2) }] };
-        }
-        case 'search_files': {
-          const p = SearchFilesSchema.parse(args);
-          const files = searchFiles(opts.db, {
-            query: p.query,
-            repoId: p.repo_id ?? null,
-            limit: p.limit,
-          });
-          return { content: [{ type: 'text', text: JSON.stringify(files, null, 2) }] };
-        }
-        case 'get_file_symbols': {
-          const p = GetFileSymbolsSchema.parse(args);
-          const symbols = getFileSymbols(opts.db, { repoId: p.repo_id, relPath: p.rel_path });
-          return { content: [{ type: 'text', text: JSON.stringify(symbols, null, 2) }] };
-        }
-        case 'explain_symbol': {
-          const p = ExplainSymbolSchema.parse(args);
-          const explanation = await explainSymbol(opts.db, p.symbol_id, ai);
-          return { content: [{ type: 'text', text: explanation }] };
-        }
-        case 'get_repo_stats': {
-          const p = GetRepoStatsSchema.parse(args);
-          const stats = getRepoStats(opts.db, p.repo_id);
-          return { content: [{ type: 'text', text: JSON.stringify(stats, null, 2) }] };
-        }
-        case 'remove_repo': {
-          const p = RemoveRepoSchema.parse(args);
-          removeRepo(opts.registry, p.repo_id);
-          return { content: [{ type: 'text', text: `Repo ${p.repo_id} removed.` }] };
-        }
-        case 'get_symbol_context': {
-          const p = GetSymbolContextSchema.parse(args);
-          const result = getSymbolContext(opts.db, opts.graph, opts.repoId, p.symbol_name, p.depth);
-          if (!result) return { content: [{ type: 'text', text: `Symbol not found: ${p.symbol_name}` }], isError: true };
-          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-        }
-        case 'get_import_chain': {
-          const p = GetImportChainSchema.parse(args);
-          const result = getImportChain(opts.db, opts.graph, opts.repoId, p.file_path, p.depth);
-          if (!result) return { content: [{ type: 'text', text: `File not found: ${p.file_path}` }], isError: true };
-          return { content: [{ type: 'text', text: JSON.stringify(result, null, 2) }] };
-        }
-        default:
-          return { content: [{ type: 'text', text: `Unknown tool: ${name}` }], isError: true };
-      }
+      const results = searchSymbols(opts.db, { query, repoId: repo_id ?? null, kind: kind ?? null, limit, offset });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(results, null, 2) }] };
     } catch (e) {
-      const msg = isAppError(e) ? `[${e.code}] ${e.message}` : String(e);
-      return { content: [{ type: 'text', text: msg }], isError: true };
+      return { content: [{ type: 'text' as const, text: errText(e) }], isError: true };
+    }
+  });
+
+  server.registerTool('get_symbol_detail', {
+    description:
+      'Metadata-only lookup by symbol UUID: file path, line range, signature, kind. Does NOT include callers/callees (use get_symbol_context for graph). Does NOT call AI (use explain_symbol for AI summary).',
+    inputSchema: GetSymbolDetailSchema,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async ({ symbol_id }) => {
+    try {
+      const detail = getSymbolDetail(opts.db, symbol_id);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(detail, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: 'text' as const, text: errText(e) }], isError: true };
+    }
+  });
+
+  server.registerTool('list_repos', {
+    description: 'List all registered repositories with their IDs, names, and root paths.',
+    inputSchema: {},
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async () => {
+    try {
+      const repos = listRepos(opts.registry);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(repos, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: 'text' as const, text: errText(e) }], isError: true };
+    }
+  });
+
+  server.registerTool('find_references', {
+    description:
+      'Exact-name lookup: returns every symbol definition matching the exact name, plus callers from the call graph (depth=1). Use search_symbols for fuzzy/keyword search.',
+    inputSchema: FindReferencesSchema,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async ({ symbol_name, repo_id }) => {
+    try {
+      const refs = findReferences(opts.db, { symbolName: symbol_name, repoId: repo_id ?? null }, opts.graph, opts.repoId);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(refs, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: 'text' as const, text: errText(e) }], isError: true };
+    }
+  });
+
+  server.registerTool('search_files', {
+    description: 'Search for indexed files by partial path fragment. Returns file metadata (path, language, size).',
+    inputSchema: SearchFilesSchema,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async ({ query, repo_id, limit, offset }) => {
+    try {
+      const files = searchFiles(opts.db, { query, repoId: repo_id ?? null, limit, offset });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(files, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: 'text' as const, text: errText(e) }], isError: true };
+    }
+  });
+
+  server.registerTool('get_file_symbols', {
+    description: 'Get all symbols defined in a specific file, ordered by line number.',
+    inputSchema: GetFileSymbolsSchema,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async ({ repo_id, rel_path }) => {
+    try {
+      const symbols = getFileSymbols(opts.db, { repoId: repo_id, relPath: rel_path });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(symbols, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: 'text' as const, text: errText(e) }], isError: true };
+    }
+  });
+
+  server.registerTool('explain_symbol', {
+    description:
+      'AI-generated natural-language explanation of a symbol. Requires AI_API_KEY env var (local LLM via AI_API_BASE_URL); falls back to raw metadata if not configured. Prefer get_symbol_detail for pure metadata.',
+    inputSchema: ExplainSymbolSchema,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  }, async ({ symbol_id }) => {
+    try {
+      const explanation = await explainSymbol(opts.db, symbol_id, ai);
+      return { content: [{ type: 'text' as const, text: explanation }] };
+    } catch (e) {
+      return { content: [{ type: 'text' as const, text: errText(e) }], isError: true };
+    }
+  });
+
+  server.registerTool('get_repo_stats', {
+    description: 'Get indexing statistics for a repository: file count, symbol count, language breakdown.',
+    inputSchema: GetRepoStatsSchema,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async ({ repo_id }) => {
+    try {
+      const stats = getRepoStats(opts.db, repo_id);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(stats, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: 'text' as const, text: errText(e) }], isError: true };
+    }
+  });
+
+  server.registerTool('get_symbol_context', {
+    description:
+      'Graph view of a symbol: who calls it (callers, incoming) and what it calls (callees, outgoing), up to BFS depth 3. Use depth=1 for direct only. Response includes blastRadius = callers.length (who breaks if you change this) and impactCount = callers+callees total.',
+    inputSchema: GetSymbolContextSchema,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async ({ symbol_name, depth }) => {
+    try {
+      const result = getSymbolContext(opts.db, opts.graph, opts.repoId, symbol_name, depth);
+      if (!result) return { content: [{ type: 'text' as const, text: `Symbol not found: ${symbol_name}` }], isError: true };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: 'text' as const, text: errText(e) }], isError: true };
+    }
+  });
+
+  server.registerTool('get_import_chain', {
+    description: 'Get the import dependency chain starting from a file (IMPORTS edges, BFS). Shows what a file depends on transitively.',
+    inputSchema: GetImportChainSchema,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async ({ file_path, depth }) => {
+    try {
+      const result = getImportChain(opts.db, opts.graph, opts.repoId, file_path, depth);
+      if (!result) return { content: [{ type: 'text' as const, text: `File not found: ${file_path}` }], isError: true };
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: 'text' as const, text: errText(e) }], isError: true };
+    }
+  });
+
+  // ── Mutating tools ───────────────────────────────────────────
+
+  server.registerTool('register_repo', {
+    description: 'Register a new repository for indexing. Returns the repo ID for use with other tools.',
+    inputSchema: RegisterRepoSchema,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async ({ name, root_path, language }) => {
+    try {
+      const repo = registerRepo(opts.registry, { name, rootPath: root_path, ...(language ? { language } : {}) });
+      return { content: [{ type: 'text' as const, text: JSON.stringify(repo, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: 'text' as const, text: errText(e) }], isError: true };
+    }
+  });
+
+  server.registerTool('index_repo', {
+    description: 'Trigger full indexing of a repository. This may take a while for large repos.',
+    inputSchema: IndexRepoSchema,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async ({ repo_id }) => {
+    try {
+      const result = await indexRepo(opts.registry, opts.indexer, repo_id);
+      return { content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: 'text' as const, text: errText(e) }], isError: true };
+    }
+  });
+
+  // ── Destructive tools ────────────────────────────────────────
+
+  server.registerTool('remove_repo', {
+    description: 'Remove a repository and all its indexed data from the registry. This action is irreversible.',
+    inputSchema: RemoveRepoSchema,
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
+  }, async ({ repo_id }) => {
+    try {
+      removeRepo(opts.registry, repo_id);
+      return { content: [{ type: 'text' as const, text: `Repo ${repo_id} removed.` }] };
+    } catch (e) {
+      return { content: [{ type: 'text' as const, text: errText(e) }], isError: true };
     }
   });
 }

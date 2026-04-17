@@ -5,6 +5,7 @@ export type SearchSymbolsParams = {
   repoId: string | null;
   kind?: string | null;
   limit?: number;
+  offset?: number;
 };
 
 export type SymbolResult = {
@@ -16,6 +17,13 @@ export type SymbolResult = {
   startLine: number;
   endLine: number;
   signature: string;
+};
+
+export type PaginatedResult<T> = {
+  items: T[];
+  total_count: number;
+  has_more: boolean;
+  next_offset: number;
 };
 
 type Row = {
@@ -42,8 +50,9 @@ function mapRow(r: Row): SymbolResult {
   };
 }
 
-export function searchSymbols(db: Db, params: SearchSymbolsParams): SymbolResult[] {
+export function searchSymbols(db: Db, params: SearchSymbolsParams): PaginatedResult<SymbolResult> {
   const limit = Math.min(params.limit ?? 20, 100);
+  const offset = params.offset ?? 0;
 
   const ftsQuery = params.query
     .trim()
@@ -52,51 +61,74 @@ export function searchSymbols(db: Db, params: SearchSymbolsParams): SymbolResult
     .map((t) => `"${t.replace(/"/g, '""')}"*`)
     .join(' OR ');
 
-  const args: unknown[] = [];
   let whereExtra = '';
+  const filterArgs: unknown[] = [];
   if (params.kind) {
     whereExtra += ' AND s.kind = ?';
+    filterArgs.push(params.kind);
   }
   if (params.repoId) {
     whereExtra += ' AND s.repo_id = ?';
+    filterArgs.push(params.repoId);
   }
 
-  const ftsSql = `
-    SELECT s.id, s.name, s.kind, s.repo_id, f.rel_path, s.start_line, s.end_line, s.signature
-    FROM symbols_fts fts
-    JOIN symbols s ON s.rowid = fts.rowid
-    JOIN files f ON f.id = s.file_id
-    WHERE symbols_fts MATCH ?${whereExtra}
-    ORDER BY rank
-    LIMIT ?
-  `;
-
+  // Try FTS first
   try {
-    const ftsArgs: unknown[] = [ftsQuery];
-    if (params.kind) ftsArgs.push(params.kind);
-    if (params.repoId) ftsArgs.push(params.repoId);
-    ftsArgs.push(limit);
-    const rows = db.prepare(ftsSql).all(...ftsArgs) as Row[];
-    if (rows.length > 0) return rows.map(mapRow);
+    const countSql = `
+      SELECT COUNT(*) as cnt
+      FROM symbols_fts fts
+      JOIN symbols s ON s.rowid = fts.rowid
+      WHERE symbols_fts MATCH ?${whereExtra}
+    `;
+    const countRow = db.prepare(countSql).get(ftsQuery, ...filterArgs) as { cnt: number } | undefined;
+    const totalCount = countRow?.cnt ?? 0;
+
+    const ftsSql = `
+      SELECT s.id, s.name, s.kind, s.repo_id, f.rel_path, s.start_line, s.end_line, s.signature
+      FROM symbols_fts fts
+      JOIN symbols s ON s.rowid = fts.rowid
+      JOIN files f ON f.id = s.file_id
+      WHERE symbols_fts MATCH ?${whereExtra}
+      ORDER BY rank
+      LIMIT ? OFFSET ?
+    `;
+    const rows = db.prepare(ftsSql).all(ftsQuery, ...filterArgs, limit, offset) as Row[];
+    if (rows.length > 0 || offset > 0) {
+      return {
+        items: rows.map(mapRow),
+        total_count: totalCount,
+        has_more: offset + rows.length < totalCount,
+        next_offset: offset + rows.length,
+      };
+    }
   } catch {
     // fall through to LIKE fallback
   }
 
-  // LIKE fallback (also used when FTS yields no matches)
-  // Escape LIKE wildcards (% _) so queries like `__init__` don't match too broadly.
+  // LIKE fallback
   const escapedQuery = params.query.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+
+  const countSql = `
+    SELECT COUNT(*) as cnt
+    FROM symbols s
+    WHERE s.name LIKE ? ESCAPE '\\'${whereExtra}
+  `;
+  const countRow = db.prepare(countSql).get(`%${escapedQuery}%`, ...filterArgs) as { cnt: number } | undefined;
+  const totalCount = countRow?.cnt ?? 0;
+
   const likeSql = `
     SELECT s.id, s.name, s.kind, s.repo_id, f.rel_path, s.start_line, s.end_line, s.signature
     FROM symbols s
     JOIN files f ON f.id = s.file_id
     WHERE s.name LIKE ? ESCAPE '\\'${whereExtra}
     ORDER BY s.name
-    LIMIT ?
+    LIMIT ? OFFSET ?
   `;
-  const likeArgs: unknown[] = [`%${escapedQuery}%`];
-  if (params.kind) likeArgs.push(params.kind);
-  if (params.repoId) likeArgs.push(params.repoId);
-  likeArgs.push(limit);
-  const rows = db.prepare(likeSql).all(...likeArgs) as Row[];
-  return rows.map(mapRow);
+  const rows = db.prepare(likeSql).all(`%${escapedQuery}%`, ...filterArgs, limit, offset) as Row[];
+  return {
+    items: rows.map(mapRow),
+    total_count: totalCount,
+    has_more: offset + rows.length < totalCount,
+    next_offset: offset + rows.length,
+  };
 }

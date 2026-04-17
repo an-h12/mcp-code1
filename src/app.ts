@@ -7,7 +7,7 @@ import type { Db } from './db/index.js';
 import { RepoRegistry } from './registry.js';
 import { Indexer } from './indexer/indexer.js';
 import { Watcher } from './watcher/watcher.js';
-import { McpServer } from './mcp/server.js';
+import { CodeMcpServer } from './mcp/server.js';
 import type { AiConfig } from './mcp/ai-adapter.js';
 import { InMemoryGraph } from './graph/in-memory-graph.js';
 import { ensureRepo } from './db/repo-registry.js';
@@ -23,7 +23,7 @@ export class App {
   readonly graph: InMemoryGraph;
   readonly repoRoot: string;
   repoId: string = '';
-  private mcpServer: McpServer | null = null;
+  private mcpServer: CodeMcpServer | null = null;
   private retryTimer: NodeJS.Timeout | null = null;
 
   constructor() {
@@ -137,7 +137,7 @@ export class App {
         }
       : null;
 
-    this.mcpServer = new McpServer({
+    this.mcpServer = new CodeMcpServer({
       db: this.db,
       registry: this.registry,
       indexer: this.indexer,

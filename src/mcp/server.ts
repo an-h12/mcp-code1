@@ -1,9 +1,9 @@
-import { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Db } from '../db/index.js';
 import type { RepoRegistry } from '../registry.js';
 import type { Indexer } from '../indexer/indexer.js';
-import { registerToolHandlers } from './tools/index.js';
-import { registerResourceHandlers } from './resources/index.js';
+import { registerTools } from './tools/index.js';
+import { registerResources } from './resources/index.js';
 import type { AiConfig } from './ai-adapter.js';
 import type { InMemoryGraph } from '../graph/in-memory-graph.js';
 
@@ -35,18 +35,18 @@ export type McpServerOptions = {
   repoId: string;
 };
 
-export class McpServer {
-  private server: Server;
+export class CodeMcpServer {
+  private server: McpServer;
   private opts: McpServerOptions;
 
   constructor(opts: McpServerOptions) {
     this.opts = opts;
-    this.server = new Server(
+    this.server = new McpServer(
       { name: 'mcp-code1', version: '0.1.0' },
       { capabilities: { tools: {}, resources: {} } },
     );
-    registerToolHandlers(this.server, opts);
-    registerResourceHandlers(this.server, opts);
+    registerTools(this.server, opts);
+    registerResources(this.server, opts);
   }
 
   async connectStdio(): Promise<void> {
@@ -61,7 +61,7 @@ export class McpServer {
     await this.server.close();
   }
 
-  getInternalServer(): Server {
+  getInternalServer(): McpServer {
     return this.server;
   }
 

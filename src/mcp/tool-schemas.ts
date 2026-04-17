@@ -2,9 +2,10 @@ import { z } from 'zod';
 
 export const SearchSymbolsSchema = z.object({
   query: z.string().min(1).describe('Symbol name or keyword to search for'),
-  repo_id: z.string().optional().nullable().describe('Filter to a specific repo ID'),
-  kind: z.string().optional().nullable().describe('Symbol kind filter: function, class, etc.'),
+  repo_id: z.string().optional().nullable().describe('Filter to a specific repo ID. Get IDs from list_repos.'),
+  kind: z.string().optional().nullable().describe('Symbol kind filter: function, class, interface, method, type, enum, variable, const'),
   limit: z.number().int().min(1).max(100).default(20),
+  offset: z.number().int().min(0).default(0).describe('Pagination offset. Use next_offset from previous response.'),
 });
 
 export const GetSymbolDetailSchema = z.object({
@@ -30,6 +31,7 @@ export const SearchFilesSchema = z.object({
   query: z.string().min(1).describe('Partial file path to search'),
   repo_id: z.string().optional().nullable(),
   limit: z.number().int().min(1).max(200).default(50),
+  offset: z.number().int().min(0).default(0).describe('Pagination offset. Use next_offset from previous response.'),
 });
 
 export const GetFileSymbolsSchema = z.object({
