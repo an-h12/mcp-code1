@@ -8,3 +8,33 @@ data/
 coverage/
 .claude
 .gitnexus
+
+# Editors / IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS cruft
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+
+# TypeScript / test caches
+*.tsbuildinfo
+.vitest-cache/
+.cache/
+
+# Roslyn Tier-2 binaries (built per-platform by scripts/build-roslyn.sh)
+bin/roslyn/*
+!bin/roslyn/.gitkeep
+
+# Ad-hoc probe / scratch files
+probe-*.mjs
+scratch.*

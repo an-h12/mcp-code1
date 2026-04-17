@@ -44,6 +44,17 @@ const NODE_KIND_TO_SYMBOL_KIND: Record<string, SymbolKind> = {
   impl_item: 'class',
   method_declaration: 'method',
   type_spec: 'type',
+  // C# specific (class_declaration / interface_declaration / enum_declaration /
+  // method_declaration reuse the entries above — tree-sitter-c-sharp happens to
+  // emit the same node type names and the existing mappings are already correct
+  // for C#).
+  struct_declaration: 'class',
+  record_declaration: 'class',
+  constructor_declaration: 'method',
+  property_declaration: 'variable',
+  delegate_declaration: 'type',
+  namespace_declaration: 'type',
+  file_scoped_namespace_declaration: 'type',
 };
 
 const QUERY_MAP: Record<string, string> = {
@@ -53,6 +64,7 @@ const QUERY_MAP: Record<string, string> = {
   python: 'python.scm',
   go: 'go.scm',
   rust: 'rust.scm',
+  csharp: 'csharp.scm',
 };
 
 const queryCache = new Map<string, string>();

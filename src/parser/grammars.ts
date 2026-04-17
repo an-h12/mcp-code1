@@ -9,6 +9,7 @@ import Rust from 'tree-sitter-rust';
 import Java from 'tree-sitter-java';
 import C from 'tree-sitter-c';
 import Cpp from 'tree-sitter-cpp';
+import CSharp from 'tree-sitter-c-sharp';
 
 export type Grammar = {
   name: string;
@@ -34,6 +35,7 @@ const EXT_TO_GRAMMAR: Record<string, Grammar> = {
   '.cc': { name: 'cpp', language: Cpp },
   '.cxx': { name: 'cpp', language: Cpp },
   '.hpp': { name: 'cpp', language: Cpp },
+  '.cs': { name: 'csharp', language: CSharp },
 };
 
 export function grammarForExt(ext: string): Grammar | undefined {

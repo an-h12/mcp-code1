@@ -33,6 +33,7 @@ const RELATION_QUERY_MAP: Record<string, string> = {
   python: 'relations-python.scm',
   go: 'relations-go.scm',
   rust: 'relations-rust.scm',
+  csharp: 'relations-csharp.scm',
 };
 
 const relationQueryCache = new Map<string, string>();

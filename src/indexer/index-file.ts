@@ -13,7 +13,7 @@ import { hashFile } from './file-hash.js';
  * The indexer compares this against the `extractor_version` column stored per
  * file. A mismatch forces a re-parse even if the SHA-256 content hash matches.
  */
-export const EXTRACTOR_VERSION = 1;
+export const EXTRACTOR_VERSION = 2;
 
 export type IndexFileResult = {
   filePath: string;
