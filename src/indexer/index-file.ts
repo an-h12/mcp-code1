@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
-import { extname, relative } from 'node:path';
+import { extname, relative, sep } from 'node:path';
 import type { Db } from '../db/index.js';
 import { extractSymbols } from '../parser/extractor.js';
 import { hashFile } from './file-hash.js';
@@ -17,6 +17,15 @@ type FileRow = {
   hash: string;
 };
 
+/**
+ * Normalize path to forward-slash form so DB lookups work cross-platform.
+ * Windows returns "src\foo\bar.ts" from path.relative() — but LLMs / Cline
+ * always use "src/foo/bar.ts". We store the normalized form in DB.
+ */
+function toPosixPath(p: string): string {
+  return sep === '\\' ? p.split('\\').join('/') : p;
+}
+
 export async function indexFile(
   db: Db,
   repoId: string,
@@ -24,7 +33,7 @@ export async function indexFile(
   repoRoot: string,
 ): Promise<IndexFileResult> {
   const ext = extname(absPath);
-  const relPath = relative(repoRoot, absPath);
+  const relPath = toPosixPath(relative(repoRoot, absPath));
   const hash = hashFile(absPath);
 
   const existing = db

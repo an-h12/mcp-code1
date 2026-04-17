@@ -83,15 +83,17 @@ export function searchSymbols(db: Db, params: SearchSymbolsParams): SymbolResult
   }
 
   // LIKE fallback (also used when FTS yields no matches)
+  // Escape LIKE wildcards (% _) so queries like `__init__` don't match too broadly.
+  const escapedQuery = params.query.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
   const likeSql = `
     SELECT s.id, s.name, s.kind, s.repo_id, f.rel_path, s.start_line, s.end_line, s.signature
     FROM symbols s
     JOIN files f ON f.id = s.file_id
-    WHERE s.name LIKE ?${whereExtra}
+    WHERE s.name LIKE ? ESCAPE '\\'${whereExtra}
     ORDER BY s.name
     LIMIT ?
   `;
-  const likeArgs: unknown[] = [`%${params.query}%`];
+  const likeArgs: unknown[] = [`%${escapedQuery}%`];
   if (params.kind) likeArgs.push(params.kind);
   if (params.repoId) likeArgs.push(params.repoId);
   likeArgs.push(limit);

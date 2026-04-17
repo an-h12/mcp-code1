@@ -26,7 +26,9 @@ type Row = {
 
 export function searchFiles(db: Db, params: SearchFilesParams): FileResult[] {
   const limit = Math.min(params.limit ?? 50, 200);
-  const args: unknown[] = [`%${params.query}%`];
+  // Escape LIKE wildcards so queries with % or _ don't match too broadly.
+  const escaped = params.query.replace(/\\/g, '\\\\').replace(/%/g, '\\%').replace(/_/g, '\\_');
+  const args: unknown[] = [`%${escaped}%`];
   const repoFilter = params.repoId ? `AND repo_id = ?` : '';
   if (params.repoId) args.push(params.repoId);
   args.push(limit);
@@ -35,7 +37,7 @@ export function searchFiles(db: Db, params: SearchFilesParams): FileResult[] {
     .prepare(
       `SELECT id, repo_id, rel_path, language, size_bytes, indexed_at
        FROM files
-       WHERE rel_path LIKE ? ${repoFilter}
+       WHERE rel_path LIKE ? ESCAPE '\\' ${repoFilter}
        ORDER BY rel_path
        LIMIT ?`,
     )

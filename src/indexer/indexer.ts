@@ -1,5 +1,5 @@
 import { readdirSync, statSync } from 'node:fs';
-import { join, extname, relative } from 'node:path';
+import { join, extname, relative, sep } from 'node:path';
 import PQueue from 'p-queue';
 import type { Db } from '../db/index.js';
 import { supportedExtensions } from '../parser/grammars.js';
@@ -126,7 +126,7 @@ export class Indexer {
     // Pass 2: extract and persist relations for all indexed files
     let edgesTotal = 0;
     for (const f of files) {
-      const relPath = relative(rootPath, f);
+      const relPath = sep === '\\' ? relative(rootPath, f).split('\\').join('/') : relative(rootPath, f);
       const fileRow = this.db
         .prepare(`SELECT id FROM files WHERE repo_id = ? AND rel_path = ?`)
         .get(repoId, relPath) as { id: string } | undefined;

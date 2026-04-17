@@ -21,20 +21,22 @@ export class App {
   readonly indexer: Indexer;
   readonly watcher: Watcher;
   readonly graph: InMemoryGraph;
+  readonly repoRoot: string;
   repoId: string = '';
   private mcpServer: McpServer | null = null;
+  private retryTimer: NodeJS.Timeout | null = null;
 
   constructor() {
     this.config = loadConfig();
     this.log = createLogger(this.config.logLevel);
 
     // Resolve REPO_ROOT (single-repo model)
-    const repoRoot = process.env['REPO_ROOT']
+    this.repoRoot = process.env['REPO_ROOT']
       ? path.resolve(process.env['REPO_ROOT'])
       : process.cwd();
 
-    if (!existsSync(repoRoot)) {
-      this.log.fatal({ repoRoot }, 'REPO_ROOT does not exist — check your Cline MCP config');
+    if (!existsSync(this.repoRoot)) {
+      this.log.fatal({ repoRoot: this.repoRoot }, 'REPO_ROOT does not exist — check your Cline MCP config');
       process.exit(1);
     }
 
@@ -48,7 +50,7 @@ export class App {
     this.watcher = new Watcher({ debounceMs: 300 });
     this.graph = new InMemoryGraph(this.db);
 
-    this.repoId = ensureRepo(this.db, repoRoot);
+    this.repoId = ensureRepo(this.db, this.repoRoot);
   }
 
   async start(): Promise<void> {
@@ -56,14 +58,10 @@ export class App {
 
     this.graph.startEviction();
 
-    const repoRoot = process.env['REPO_ROOT']
-      ? path.resolve(process.env['REPO_ROOT'])
-      : process.cwd();
-
     this.graph.setScanInProgress(this.repoId, true);
 
     this.indexer
-      .indexRepo(this.repoId, repoRoot)
+      .indexRepo(this.repoId, this.repoRoot)
       .then(() => {
         this.graph.setScanInProgress(this.repoId, false);
         this.graph.invalidate(this.repoId);
@@ -72,10 +70,11 @@ export class App {
       .catch((err: unknown) => {
         this.graph.setScanInProgress(this.repoId, false);
         this.log.error({ err, repoId: this.repoId }, 'runFullScan failed — retrying in 60s');
-        setTimeout(() => {
+        this.retryTimer = setTimeout(() => {
+          this.retryTimer = null;
           this.graph.setScanInProgress(this.repoId, true);
           this.indexer
-            .indexRepo(this.repoId, repoRoot)
+            .indexRepo(this.repoId, this.repoRoot)
             .then(() => {
               this.graph.setScanInProgress(this.repoId, false);
               this.graph.invalidate(this.repoId);
@@ -87,10 +86,22 @@ export class App {
         }, 60_000);
       });
 
-    await this.watcher.watch(repoRoot);
+    await this.watcher.watch(this.repoRoot);
+    // HIGH #4: catch watcher errors — unhandled 'error' events crash the process
+    this.watcher.on('error', (err: unknown) => {
+      this.log.error({ err }, 'Watcher error');
+    });
+    // CRITICAL #1: invalidate graph cache after reindex so get_symbol_context sees fresh data
     this.watcher.on('change', (filePath: string) => {
       this.log.debug({ filePath }, 'File changed — re-indexing');
-      void this.indexer.indexRepo(this.repoId, repoRoot);
+      this.indexer
+        .indexRepo(this.repoId, this.repoRoot)
+        .then(() => {
+          this.graph.invalidate(this.repoId);
+        })
+        .catch((err: unknown) => {
+          this.log.error({ err, filePath }, 'Re-index after file change failed');
+        });
     });
 
     const aiConfig: AiConfig | null = this.config.aiApiKey
@@ -116,6 +127,11 @@ export class App {
 
   async stop(): Promise<void> {
     this.log.info('App stopping');
+    // HIGH #5: clear pending retry timer so it doesn't fire after DB close
+    if (this.retryTimer) {
+      clearTimeout(this.retryTimer);
+      this.retryTimer = null;
+    }
     this.graph.stopEviction();
     await this.watcher.close();
     if (this.mcpServer) {
