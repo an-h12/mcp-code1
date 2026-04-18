@@ -1,23 +1,26 @@
-# mcp-code1
+# code-intelligence-mcp-server
 
-MCP (Model Context Protocol) server cung cấp khả năng **index & truy vấn codebase** cho các AI coding assistant (Cline, Claude Code, Cursor...).
+MCP (Model Context Protocol) server cung cấp khả năng **index & truy vấn codebase** cho AI coding assistant (Cline, Claude Code, Cursor...).
 
-Server chạy qua **stdio transport**, index codebase bằng tree-sitter (JS/TS/Python/Go/Rust/C/C++/Java/C#), lưu trong SQLite (FTS5), và expose **13 tool** để tra cứu symbol, call graph, import chain, giải thích code bằng AI.
+Server chạy qua **stdio transport**, index codebase bằng tree-sitter (JS/TS/Python/Go/Rust/C/C++/Java/C#), lưu trong SQLite (FTS5), và expose **16 tools + 3 prompts** để tra cứu symbol, call graph, blast radius analysis, import chain, và giải thích code bằng AI.
 
 ---
 
-## Tính nang chinh
+## Tính năng chính
 
-- **Multi-language**: JS/TS, Python, Go, Rust, C#, C/C++, Java
-- **13 MCP tools**: search, graph, import chain, AI explain, repo management
+- **Multi-language**: JS/TS, Python, Go, Rust, C#, C/C++, Java — parse bằng tree-sitter
+- **16 MCP tools** với prefix `code_`: search, graph, impact analysis, import chain, AI explain, repo management
+- **3 MCP Prompts**: workflow có hướng dẫn từng bước cho AI client
+- **structuredContent**: mọi tool trả về cả JSON typed object lẫn text (backward compat)
 - **Fuzzy + FTS5 search**: tìm symbol nhanh ngay cả khi không nhớ chính xác tên
-- **Call graph**: xem ai gọi hàm này (callers) và hàm này gọi gì (callees)
-- **Auto-reindex**: watcher tự reindex khi file thay đổi (debounce 300ms)
+- **Call graph BFS**: callers (ai gọi hàm này) + callees (hàm này gọi gì) tới depth 1-3
+- **Blast radius**: phân tích tầng d=1 WILL BREAK / d=2 LIKELY AFFECTED / d=3 MAY NEED TESTING với risk level LOW/MEDIUM/HIGH
+- **Auto-reindex**: chokidar watcher tự reindex khi file thay đổi (debounce 300ms, ~1-2s end-to-end)
 - **AI explain**: giải thích symbol bằng ngôn ngữ tự nhiên (cần LLM endpoint)
 
 ---
 
-## Yeu cau he thong
+## Yêu cầu hệ thống
 
 | Yêu cầu | Phiên bản |
 |----------|-----------|
@@ -27,7 +30,7 @@ Server chạy qua **stdio transport**, index codebase bằng tree-sitter (JS/TS/
 
 ---
 
-## Cai dat nhanh
+## Cài đặt nhanh
 
 ```bash
 git clone <repo-url> mcp-code1
@@ -40,14 +43,14 @@ npm run build
 
 ---
 
-## Cau hinh cho Cline (VS Code)
+## Cấu hình cho Cline (VS Code)
 
-Mở `cline_mcp_settings.json` (Command Palette > `Cline: Open MCP Settings`):
+Mở `cline_mcp_settings.json` bằng Command Palette → **Cline: Open MCP Settings**:
 
 ```json
 {
   "mcpServers": {
-    "mcp-code1": {
+    "code-intelligence": {
       "command": "node",
       "args": ["C:/path/to/mcp-code1/dist/index.js"],
       "env": {
@@ -57,9 +60,22 @@ Mở `cline_mcp_settings.json` (Command Palette > `Cline: Open MCP Settings`):
       },
       "disabled": false,
       "autoApprove": [
-        "search_symbols", "find_references", "get_symbol_detail",
-        "get_symbol_context", "get_import_chain", "search_files",
-        "get_file_symbols", "get_repo_stats", "list_repos"
+        "code_search_symbols",
+        "code_get_symbol_detail",
+        "code_list_repos",
+        "code_register_repo",
+        "code_index_repo",
+        "code_find_references",
+        "code_search_files",
+        "code_get_file_symbols",
+        "code_explain_symbol",
+        "code_get_repo_stats",
+        "code_remove_repo",
+        "code_get_symbol_context",
+        "code_get_import_chain",
+        "code_find_callers",
+        "code_find_callees",
+        "code_get_impact_analysis"
       ],
       "timeout": 60
     }
@@ -67,93 +83,136 @@ Mở `cline_mcp_settings.json` (Command Palette > `Cline: Open MCP Settings`):
 }
 ```
 
-### Bien moi truong
+> **Lưu ý breaking change:** Tên server đã đổi từ `mcp-code1` → `code-intelligence` và tất cả tool đã có prefix `code_`. Nếu bạn đang dùng phiên bản cũ, cần cập nhật `autoApprove` list như trên.
+
+### Biến môi trường
 
 | Biến | Bắt buộc | Mô tả |
 |------|----------|-------|
-| `REPO_ROOT` | Co | Thư mục gốc repo cần index |
-| `DB_PATH` | Co | Đường dẫn file SQLite |
-| `LOG_LEVEL` | Khong | `trace`/`debug`/`info`/`warn`/`error`/`fatal` (default: `info`) |
-| `AI_API_KEY` | Khong | API key cho LLM (dùng cho `explain_symbol`) |
-| `AI_API_BASE_URL` | Khong | Base URL LLM endpoint |
-| `AI_MODEL` | Khong | Tên model LLM |
+| `REPO_ROOT` | **Có** | Thư mục gốc repo cần index (path tuyệt đối) |
+| `DB_PATH` | **Có** | Đường dẫn file SQLite lưu index |
+| `LOG_LEVEL` | Không | `trace`/`debug`/`info`/`warn`/`error`/`fatal` (default: `info`) |
+| `AI_API_KEY` | Không | API key cho LLM (dùng cho `code_explain_symbol`) |
+| `AI_API_BASE_URL` | Không | Base URL LLM endpoint (ví dụ: `http://localhost:11434/v1`) |
+| `AI_MODEL` | Không | Tên model LLM (ví dụ: `qwen2.5-coder`) |
 
 ---
 
-## 13 Tools
+## 16 Tools
 
-### Tim kiem
+Tất cả tool có prefix `code_` và trả về `structuredContent` (typed JSON object) cùng với `content[].text` (backward compat).
 
-| Tool | Mô tả |
-|------|-------|
-| `search_symbols` | Fuzzy/FTS5 search symbol theo keyword |
-| `find_references` | Exact-name lookup: mọi nơi symbol xuất hiện |
-| `search_files` | Tìm file theo path fragment |
-| `get_file_symbols` | List toàn bộ symbol trong 1 file |
+### Tìm kiếm
 
-### Chi tiet & Graph
+| Tool | Input bắt buộc | Mô tả |
+|------|---------------|-------|
+| `code_search_symbols` | `query` | Fuzzy/FTS5 search symbol theo keyword. Dùng khi không biết tên chính xác. |
+| `code_find_references` | `symbol_name` | Exact-name lookup: mọi định nghĩa + callers (depth=1). Dùng khi biết tên chính xác. |
+| `code_search_files` | `query` | Tìm file theo path fragment |
+| `code_get_file_symbols` | `repo_id`, `rel_path` | List toàn bộ symbol trong 1 file, sắp xếp theo line |
 
-| Tool | Mô tả |
-|------|-------|
-| `get_symbol_detail` | Metadata: file, line, signature, kind |
-| `get_symbol_context` | Call graph: callers + callees, blast radius |
-| `get_import_chain` | BFS import dependency chain |
-| `explain_symbol` | AI giải thích symbol (fallback metadata nếu không có LLM) |
+### Chi tiết & Call Graph
 
-### Quan tri repo
+| Tool | Input bắt buộc | Mô tả |
+|------|---------------|-------|
+| `code_get_symbol_detail` | `symbol_id` | Metadata: file, line range, signature, kind, docComment |
+| `code_get_symbol_context` | `symbol_name` | Full graph view: callers + callees (depth 1-3), blastRadius, impactCount |
+| `code_find_callers` | `symbol_name` | Chỉ callers (incoming BFS). Đơn giản hơn `get_symbol_context` khi chỉ cần callers. |
+| `code_find_callees` | `symbol_name` | Chỉ callees (outgoing BFS). Đơn giản hơn `get_symbol_context` khi chỉ cần callees. |
+| `code_get_import_chain` | `file_path` | BFS import dependency chain từ 1 file |
+| `code_explain_symbol` | `symbol_id` | AI giải thích symbol (fallback metadata nếu không có LLM) |
 
-| Tool | Mô tả |
-|------|-------|
-| `list_repos` | List tất cả repo đã đăng ký |
-| `register_repo` | Đăng ký repo mới |
-| `index_repo` | Trigger full re-index |
-| `get_repo_stats` | Thống kê files/symbols/edges |
-| `remove_repo` | Xóa repo khỏi registry |
+### Blast Radius Analysis
 
----
+| Tool | Input bắt buộc | Mô tả |
+|------|---------------|-------|
+| `code_get_impact_analysis` | `symbol_name` | Phân tích blast radius 3 tầng: `d=1` WILL BREAK / `d=2` LIKELY AFFECTED / `d=3` MAY NEED TESTING. Risk level: `LOW`/`MEDIUM`/`HIGH`. |
 
-## Ngon ngu ho tro
+### Quản trị repo
 
-| Ngôn ngữ | Parser | Symbols | Relations |
-|-----------|--------|---------|-----------|
-| JavaScript / JSX | tree-sitter | Yes | Yes |
-| TypeScript / TSX | tree-sitter | Yes | Yes |
-| Python | tree-sitter | Yes | Yes |
-| Go | tree-sitter | Yes | Yes |
-| Rust | tree-sitter | Yes | Yes |
-| C# | tree-sitter / Roslyn | Yes | Yes (Roslyn) |
-| C / C++ / Java | tree-sitter | Yes | Khong |
+| Tool | Input bắt buộc | Mô tả |
+|------|---------------|-------|
+| `code_list_repos` | — | List tất cả repo đã đăng ký (trả về `{ repos: [...] }`) |
+| `code_register_repo` | `name`, `root_path` | Đăng ký repo mới, trả về repo ID |
+| `code_index_repo` | `repo_id` | Trigger full re-index (skips unchanged files tự động) |
+| `code_get_repo_stats` | `repo_id` | Thống kê: fileCount, symbolCount, languageBreakdown |
+| `code_remove_repo` | `repo_id` | Xóa repo + toàn bộ index (không thể hoàn tác) |
 
 ---
 
-## Chay test
+## 3 Prompts
+
+MCP Prompts là workflow có hướng dẫn từng bước — AI client gọi prompt, nhận hướng dẫn chi tiết cách dùng các tools theo trình tự.
+
+| Prompt | Arguments | Mô tả |
+|--------|-----------|-------|
+| `code_analyze_symbol_impact` | `symbol_name` (bắt buộc) | Phân tích blast radius, list d=1 phải update, d=2 cần test, đề xuất bước refactor an toàn |
+| `code_onboard_repo` | `name`, `root_path`, `language` | Hướng dẫn register → index → stats một repo mới |
+| `code_explain_codebase` | — | Tổng quan kiến trúc: tech stack, modules, entry points, patterns |
+
+---
+
+## Ngôn ngữ hỗ trợ
+
+| Ngôn ngữ | Extensions | Symbols | Call Relations |
+|-----------|-----------|---------|----------------|
+| TypeScript / TSX | `.ts`, `.tsx` | ✅ | ✅ |
+| JavaScript / JSX | `.js`, `.jsx`, `.mjs`, `.cjs` | ✅ | ✅ |
+| Python | `.py` | ✅ | ✅ |
+| Go | `.go` | ✅ | ✅ |
+| Rust | `.rs` | ✅ | ✅ |
+| C# | `.cs` | ✅ | ✅ |
+| Java | `.java` | ✅ | Không |
+| C / C++ | `.c`, `.h`, `.cpp`, `.cc`, `.hpp` | ✅ | Không |
+
+---
+
+## Auto-reindex (File Watcher)
+
+Server tự động cập nhật index khi code thay đổi — không cần restart hay gọi `code_index_repo` thủ công:
+
+| Event | Hành động | Thời gian |
+|-------|-----------|-----------|
+| Tạo file mới | `indexSingleFile()` + invalidate graph | ~1-2s |
+| Sửa file | `indexSingleFile()` + invalidate graph | ~1-2s |
+| Xoá file | `removeFile()` + invalidate graph + cascade delete symbols | ~1s |
+
+**Cơ chế:** chokidar watcher → debounce 300ms → re-index → graph cache invalidation.
+
+> Các thư mục bị bỏ qua: `node_modules`, `dist`, `build`, thư mục ẩn (`.git`, `.next`...).
+
+---
+
+## Chạy test
 
 ```bash
 npm test
 ```
 
-40 test files, 200+ tests covering: MCP protocol, tool handlers, indexer, graph, parser, reliability.
+43 test files, 210+ tests covering: MCP protocol, tool handlers, indexer, graph, parser, reliability.
 
-### Test voi LLM that
+### Test với LLM thật (local)
 
 ```bash
-AI_API_KEY=local AI_API_BASE_URL=http://localhost:11434/v1 AI_MODEL=qwen2.5-coder npm test -- tests/live-llm.test.ts
+AI_API_KEY=local AI_API_BASE_URL=http://localhost:11434/v1 AI_MODEL=qwen2.5-coder npx vitest run tests/live-llm.test.ts
 ```
 
 ---
 
-## Kien truc
+## Kiến trúc
 
 ```
 AI Client (Cline / Claude Code / Cursor)
-  |  stdio (JSON-RPC 2.0)
-  v
-mcp-code1 (Node.js)
-  +-- Indexer (tree-sitter: symbols + relations)
-  +-- Watcher (chokidar, debounce 300ms)
-  +-- SQLite DB (WAL + FTS5)
-  +-- InMemoryGraph (BFS, TTL 30min)
-  +-- Roslyn Bridge (optional, C#)
+  │  stdio (JSON-RPC 2.0 / MCP protocol)
+  ▼
+code-intelligence-mcp-server (Node.js)
+  ├── 16 Tools  (code_search_symbols, code_get_impact_analysis, ...)
+  ├── 3 Prompts (code_analyze_symbol_impact, code_onboard_repo, ...)
+  ├── Resources (repo context, cluster view, process traces)
+  ├── Indexer   (tree-sitter: symbols + call relations)
+  ├── Watcher   (chokidar, debounce 300ms — auto-reindex on save)
+  ├── SQLite DB (WAL mode + FTS5 full-text search)
+  └── InMemoryGraph (BFS call graph, TTL 30min cache)
 ```
 
 ---
@@ -162,13 +221,15 @@ mcp-code1 (Node.js)
 
 | Lỗi | Cách xử lý |
 |-----|------------|
-| `Config FAIL: DB_PATH Required` | Thiếu `DB_PATH` trong env |
-| `gyp ERR! find VS` | Cần Visual Studio Build Tools hoặc dùng `better-sqlite3@^12.9.0` |
-| `'tsc' is not recognized` | `npm install --ignore-scripts && npm run build` |
-| Cline 🔴 Disconnected | Kiểm tra path `dist/index.js`, `REPO_ROOT`, đã build chưa |
-| `explain_symbol` trả metadata thô | Chưa set `AI_API_KEY` / `AI_API_BASE_URL` |
+| Cline 🔴 Disconnected | Kiểm tra path `dist/index.js` đúng chưa, đã `npm run build` chưa |
+| `Config FAIL: DB_PATH Required` | Thiếu `DB_PATH` trong `env` |
+| Tools không hiển thị trong Cline | Restart Cline sau khi sửa `cline_mcp_settings.json` |
+| `autoApprove` không nhận tool | Tên tool phải có prefix `code_` (phiên bản cũ không có prefix) |
+| `gyp ERR! find VS` | Cài Visual Studio Build Tools hoặc dùng `better-sqlite3 >= 12.9.0` |
+| `code_explain_symbol` trả metadata thô | Chưa set `AI_API_KEY` + `AI_API_BASE_URL` |
+| File thay đổi nhưng không reindex | Kiểm tra `REPO_ROOT` trỏ đúng thư mục. Thư mục `dist/`, `node_modules/` bị bỏ qua theo thiết kế. |
 
-> Chi tiết troubleshooting đầy đủ xem [INSTALLATION.md](./INSTALLATION.md)
+> Chi tiết troubleshooting xem [INSTALLATION.md](./INSTALLATION.md)
 
 ---
 
