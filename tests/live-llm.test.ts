@@ -7,7 +7,7 @@
  *   export AI_API_KEY="sk-your-token"
  *   export AI_API_BASE_URL="http://localhost:11434/v1"   # Ollama
  *   # hoặc "http://localhost:1234/v1"                    # LM Studio
- *   export AI_MODEL="qwen2.5-coder:7b"                   # optional
+ *   export AI_MODEL="your-model:7b"                   # optional
  *   npm test -- tests/live-llm.test.ts
  *
  * Nếu Cline của bạn chỉ cung cấp API token (không có baseUrl), hãy hỏi
@@ -52,7 +52,7 @@ describeLive('Live LLM integration (AI_API_KEY set)', () => {
     const adapter = createAiAdapter({
       apiKey: process.env['AI_API_KEY']!,
       baseUrl: process.env['AI_API_BASE_URL'] ?? '',
-      model: process.env['AI_MODEL'] ?? 'qwen2.5-coder',
+      model: process.env['AI_MODEL'] ?? 'your-model',
     });
     expect(adapter).not.toBeNull();
     expect(typeof adapter!.explain).toBe('function');
@@ -62,7 +62,7 @@ describeLive('Live LLM integration (AI_API_KEY set)', () => {
     const adapter = createAiAdapter({
       apiKey: process.env['AI_API_KEY']!,
       baseUrl: process.env['AI_API_BASE_URL'] ?? '',
-      model: process.env['AI_MODEL'] ?? 'qwen2.5-coder',
+      model: process.env['AI_MODEL'] ?? 'your-model',
     });
     expect(adapter).not.toBeNull();
 
@@ -82,7 +82,7 @@ describeLive('Live LLM integration (AI_API_KEY set)', () => {
     const adapter = createAiAdapter({
       apiKey: process.env['AI_API_KEY']!,
       baseUrl: process.env['AI_API_BASE_URL'] ?? '',
-      model: process.env['AI_MODEL'] ?? 'qwen2.5-coder',
+      model: process.env['AI_MODEL'] ?? 'your-model',
     });
 
     const text = await explainSymbol(db, symbolId, adapter);
@@ -94,7 +94,7 @@ describeLive('Live LLM integration (AI_API_KEY set)', () => {
     const adapter = createAiAdapter({
       apiKey: process.env['AI_API_KEY']!,
       baseUrl: process.env['AI_API_BASE_URL'] ?? '',
-      model: process.env['AI_MODEL'] ?? 'qwen2.5-coder',
+      model: process.env['AI_MODEL'] ?? 'your-model',
     });
 
     const longContext = 'class Foo { method() {} }\n'.repeat(100);

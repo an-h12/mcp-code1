@@ -34,7 +34,7 @@ export function createAiAdapter(config: AiConfig): AiAdapter | null {
     async explain(context, question) {
       const client = await getClient();
       const res = await client.chat.completions.create({
-        model: config.model || 'qwen2.5-coder',
+        model: config.model || '',
         messages: [
           { role: 'system', content: 'You are a code intelligence assistant. Answer concisely.' },
           { role: 'user', content: `Context:\n${context}\n\nQuestion: ${question}` },

@@ -74,12 +74,12 @@ describe('Cline config validation', () => {
       process.env['DB_PATH'] = './data/db.sqlite';
       process.env['AI_API_KEY'] = 'sk-xxx';
       process.env['AI_API_BASE_URL'] = 'http://localhost:11434/v1';
-      process.env['AI_MODEL'] = 'qwen2.5-coder';
+      process.env['AI_MODEL'] = 'your-model';
       const { loadConfig } = await import('../src/config.js');
       const cfg = loadConfig();
       expect(cfg.aiApiKey).toBe('sk-xxx');
       expect(cfg.aiApiBaseUrl).toBe('http://localhost:11434/v1');
-      expect(cfg.aiModel).toBe('qwen2.5-coder');
+      expect(cfg.aiModel).toBe('your-model');
     });
 
     it('không có AI_* → explain_symbol fallback (không crash)', async () => {
@@ -90,12 +90,12 @@ describe('Cline config validation', () => {
       // aiConfig sẽ được tạo null trong App → explain_symbol fallback về raw metadata
     });
 
-    it('AI_MODEL empty string fallback về qwen2.5-coder default', async () => {
+    it('AI_MODEL empty string → giữ nguyên empty (user phải set rõ model name)', async () => {
       process.env['DB_PATH'] = './data/db.sqlite';
       process.env['AI_MODEL'] = '';
       const { loadConfig } = await import('../src/config.js');
       const cfg = loadConfig();
-      expect(cfg.aiModel).toBe('qwen2.5-coder');
+      expect(cfg.aiModel).toBe('');
     });
   });
 
@@ -181,7 +181,7 @@ describe('Cline config validation', () => {
         LOG_LEVEL: 'info',
         AI_API_KEY: 'sk-user-provided-token',
         AI_API_BASE_URL: 'http://localhost:11434/v1',
-        AI_MODEL: 'qwen2.5-coder:7b',
+        AI_MODEL: 'custom-model:7b',
       };
       Object.assign(process.env, clineEnv);
 

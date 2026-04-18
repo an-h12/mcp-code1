@@ -1,6 +1,6 @@
 # code-intelligence-mcp-server
 
-MCP (Model Context Protocol) server cung cấp khả năng **index & truy vấn codebase** cho AI coding assistant (Cline, Claude Code, Cursor...).
+MCP (Model Context Protocol) server cung cấp khả năng **index & truy vấn codebase** cho AI coding assistant (Cline, AI IDE...).
 
 Server chạy qua **Streamable HTTP transport** (localhost), index codebase bằng tree-sitter (JS/TS/Python/Go/Rust/C/C++/Java/C#), lưu trong SQLite (FTS5), và expose **16 tools + 3 prompts** để tra cứu symbol, call graph, blast radius analysis, import chain, và giải thích code bằng AI.
 
@@ -105,7 +105,7 @@ Mở `cline_mcp_settings.json` bằng Command Palette → **Cline: Open MCP Sett
 | `LOG_LEVEL` | Không | `trace`/`debug`/`info`/`warn`/`error`/`fatal` (default: `info`) |
 | `AI_API_KEY` | Không | API key cho LLM (dùng cho `code_explain_symbol`) |
 | `AI_API_BASE_URL` | Không | Base URL LLM endpoint (ví dụ: `http://localhost:11434/v1`) |
-| `AI_MODEL` | Không | Tên model LLM (ví dụ: `qwen2.5-coder`) |
+| `AI_MODEL` | Không | Tên model LLM (ví dụ: `your-model-name`) |
 
 ---
 
@@ -205,8 +205,8 @@ npm test
 ## Kiến trúc
 
 ```
-AI Client (Cline )
-  │  stdio (JSON-RPC 2.0 / MCP protocol)
+AI Client (Cline)
+  │  HTTP/SSE (JSON-RPC 2.0 / MCP protocol)
   ▼
 code-intelligence-mcp-server (Node.js)
   ├── 16 Tools  (code_search_symbols, code_get_impact_analysis, ...)
