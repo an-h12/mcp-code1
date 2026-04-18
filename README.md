@@ -191,18 +191,10 @@ npm test
 
 43 test files, 210+ tests covering: MCP protocol, tool handlers, indexer, graph, parser, reliability.
 
-### Test với LLM thật (local)
-
-```bash
-AI_API_KEY=local AI_API_BASE_URL=http://localhost:11434/v1 AI_MODEL=qwen2.5-coder npx vitest run tests/live-llm.test.ts
-```
-
----
-
 ## Kiến trúc
 
 ```
-AI Client (Cline / Claude Code / Cursor)
+AI Client (Cline )
   │  stdio (JSON-RPC 2.0 / MCP protocol)
   ▼
 code-intelligence-mcp-server (Node.js)

@@ -111,14 +111,6 @@ Kết quả: thư mục `dist/` với entrypoint `dist/index.js`.
 
 Dùng Command Palette (`Ctrl+Shift+P`) → gõ **`Cline: Open MCP Settings`**
 
-Hoặc mở thủ công tại:
-
-| OS | Đường dẫn |
-|----|-----------|
-| **Windows** | `%APPDATA%\Code\User\globalStorage\saoudrizwan.claude-dev\settings\cline_mcp_settings.json` |
-| **macOS** | `~/Library/Application Support/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` |
-| **Linux** | `~/.config/Code/User/globalStorage/saoudrizwan.claude-dev/settings/cline_mcp_settings.json` |
-
 ### Bước 4.3 — Thêm cấu hình MCP server
 
 Paste nội dung sau vào file, **thay thế các path theo máy của bạn**:
@@ -210,20 +202,20 @@ cp /path/to/mcp-code1/instruction-mcp.md .clinerules
 ### Cách C — AI CLI: Memory file
 
 ```bash
-# Thêm vào CLAUDE.md của project
-cat /path/to/mcp-code1/instruction-mcp.md >> CLAUDE.md
+# Thêm vào Cline.md của project
+cat /path/to/mcp-code1/instruction-mcp.md >> Cline.md
 ```
 
-Hoặc tạo file riêng trong `.claude/`:
+Hoặc tạo file riêng trong `.Cline/`:
 
 ```bash
-cp /path/to/mcp-code1/instruction-mcp.md .claude/mcp-instructions.md
+cp /path/to/mcp-code1/instruction-mcp.md .Cline/mcp-instructions.md
 ```
 
-Sau đó thêm vào `CLAUDE.md`:
+Sau đó thêm vào `Cline.md`:
 ```markdown
 ## MCP Tools
-@.claude/mcp-instructions.md
+@.Cline/mcp-instructions.md
 ```
 
 ### Kiểm tra instruction đã có hiệu lực
@@ -274,7 +266,7 @@ Thêm 3 biến sau vào block `"env"` trong config MCP:
 
 ```bash
 # Cài Ollama từ https://ollama.ai/ rồi pull model:
-ollama pull qwen2.5-coder
+ollama pull localAI2.5-coder
 ```
 
 ```json
@@ -282,18 +274,8 @@ ollama pull qwen2.5-coder
   "REPO_ROOT": "...",
   "DB_PATH": "...",
   "AI_API_KEY": "local",
-  "AI_API_BASE_URL": "http://localhost:11434/v1",
-  "AI_MODEL": "qwen2.5-coder"
-}
-```
-
-### LM Studio
-
-```json
-"env": {
-  "AI_API_KEY": "local",
-  "AI_API_BASE_URL": "http://localhost:1234/v1",
-  "AI_MODEL": "tên-model-trong-lm-studio"
+  "AI_API_BASE_URL": "http://localhost:11434",
+  "AI_MODEL": "localAI2.5-coder"
 }
 ```
 
