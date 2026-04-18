@@ -26,6 +26,12 @@ import {
   RegisterRepoOutputSchema,
   IndexRepoOutputSchema,
   RemoveRepoOutputSchema,
+  FindCallersSchema,
+  FindCalleesSchema,
+  GetImpactAnalysisSchema,
+  FindCallersOutputSchema,
+  FindCalleesOutputSchema,
+  GetImpactAnalysisOutputSchema,
 } from '../tool-schemas.js';
 import { searchSymbols } from './search-symbols.js';
 import { getSymbolDetail } from './get-symbol-detail.js';
@@ -40,6 +46,9 @@ import { getRepoStats } from './get-repo-stats.js';
 import { removeRepo } from './remove-repo.js';
 import { getSymbolContext } from './get-symbol-context.js';
 import { getImportChain } from './get-import-chain.js';
+import { findCallers } from './find-callers.js';
+import { findCallees } from './find-callees.js';
+import { getImpactAnalysis } from './get-impact-analysis.js';
 import { createAiAdapter } from '../ai-adapter.js';
 import { isAppError } from '../../errors.js';
 
@@ -240,6 +249,53 @@ export function registerTools(server: McpServer, opts: McpServerOptions): void {
     try {
       removeRepo(opts.registry, repo_id);
       return { structuredContent: { repoId: repo_id, removed: true }, content: [{ type: 'text' as const, text: `Repo ${repo_id} removed.` }] };
+    } catch (e) {
+      return { content: [{ type: 'text' as const, text: errText(e) }], isError: true };
+    }
+  });
+
+  // ── New graph tools ─────────────────────────────────────────────
+
+  server.registerTool('code_find_callers', {
+    description: 'Focused incoming-only BFS: returns who calls this symbol up to the given depth. Use depth=1 for direct callers only. Simpler than code_get_symbol_context when you only need callers.',
+    inputSchema: FindCallersSchema,
+    outputSchema: FindCallersOutputSchema,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async ({ symbol_name, repo_id, depth }) => {
+    try {
+      const result = findCallers(opts.db, opts.graph, opts.repoId, { symbolName: symbol_name, repoId: repo_id ?? null, depth: depth ?? 1 });
+      if (!result) return { content: [{ type: 'text' as const, text: `Symbol not found: ${symbol_name}` }], isError: true };
+      return { structuredContent: result, content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: 'text' as const, text: errText(e) }], isError: true };
+    }
+  });
+
+  server.registerTool('code_find_callees', {
+    description: 'Focused outgoing-only BFS: returns what this symbol calls up to the given depth. Use depth=1 for direct dependencies only.',
+    inputSchema: FindCalleesSchema,
+    outputSchema: FindCalleesOutputSchema,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async ({ symbol_name, repo_id, depth }) => {
+    try {
+      const result = findCallees(opts.db, opts.graph, opts.repoId, { symbolName: symbol_name, repoId: repo_id ?? null, depth: depth ?? 1 });
+      if (!result) return { content: [{ type: 'text' as const, text: `Symbol not found: ${symbol_name}` }], isError: true };
+      return { structuredContent: result, content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
+    } catch (e) {
+      return { content: [{ type: 'text' as const, text: errText(e) }], isError: true };
+    }
+  });
+
+  server.registerTool('code_get_impact_analysis', {
+    description: 'Blast radius analysis: returns risk level (LOW/MEDIUM/HIGH) and tiered callers — d=1 WILL BREAK, d=2 LIKELY AFFECTED, d=3 MAY NEED TESTING. Use before modifying any symbol.',
+    inputSchema: GetImpactAnalysisSchema,
+    outputSchema: GetImpactAnalysisOutputSchema,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async ({ symbol_name, repo_id }) => {
+    try {
+      const result = getImpactAnalysis(opts.db, opts.graph, opts.repoId, { symbolName: symbol_name, repoId: repo_id ?? null });
+      if (!result) return { content: [{ type: 'text' as const, text: `Symbol not found: ${symbol_name}` }], isError: true };
+      return { structuredContent: result, content: [{ type: 'text' as const, text: JSON.stringify(result, null, 2) }] };
     } catch (e) {
       return { content: [{ type: 'text' as const, text: errText(e) }], isError: true };
     }

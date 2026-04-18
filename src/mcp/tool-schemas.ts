@@ -191,3 +191,54 @@ export const RemoveRepoOutputSchema = z.object({
   repoId: z.string(),
   removed: z.boolean(),
 });
+
+// ── Chunk 3: new graph tools ───────────────────────────────────────────────
+
+export const FindCallersSchema = z.object({
+  symbol_name: z.string().min(1).describe('Exact or partial symbol name to find callers for'),
+  repo_id: z.string().optional().nullable().describe('Filter by repo. Falls back to server default repo.'),
+  depth: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional().default(1).describe('BFS traversal depth. Default 1 = direct callers only.'),
+});
+
+export const FindCalleesSchema = z.object({
+  symbol_name: z.string().min(1).describe('Exact or partial symbol name to find callees for'),
+  repo_id: z.string().optional().nullable().describe('Filter by repo. Falls back to server default repo.'),
+  depth: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional().default(1).describe('BFS traversal depth. Default 1 = direct callees only.'),
+});
+
+export const GetImpactAnalysisSchema = z.object({
+  symbol_name: z.string().min(1).describe('Symbol to analyze blast radius for'),
+  repo_id: z.string().optional().nullable().describe('Filter by repo. Falls back to server default repo.'),
+});
+
+const ImpactTierSchema = z.object({
+  symbols: z.array(z.object({
+    symbolId: z.string(),
+    name: z.string(),
+    filePath: z.string(),
+    line: z.number(),
+    via: z.string(),
+  })),
+  count: z.number(),
+});
+
+export const FindCallersOutputSchema = z.object({
+  symbol: z.object({ id: z.string(), name: z.string(), kind: z.string(), filePath: z.string(), line: z.number() }),
+  callers: z.array(z.object({ symbolId: z.string(), name: z.string(), filePath: z.string(), line: z.number(), depth: z.number(), via: z.string() })),
+  blastRadius: z.number(),
+});
+
+export const FindCalleesOutputSchema = z.object({
+  symbol: z.object({ id: z.string(), name: z.string(), kind: z.string(), filePath: z.string(), line: z.number() }),
+  callees: z.array(z.object({ symbolId: z.string(), name: z.string(), filePath: z.string(), line: z.number(), depth: z.number(), via: z.string() })),
+  dependencyCount: z.number(),
+});
+
+export const GetImpactAnalysisOutputSchema = z.object({
+  symbol: z.object({ id: z.string(), name: z.string(), kind: z.string(), filePath: z.string(), line: z.number() }),
+  risk: z.enum(['LOW', 'MEDIUM', 'HIGH']),
+  direct: ImpactTierSchema,
+  indirect: ImpactTierSchema,
+  transitive: ImpactTierSchema,
+  totalImpact: z.number(),
+});

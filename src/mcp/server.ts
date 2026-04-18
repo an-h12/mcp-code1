@@ -22,6 +22,9 @@ export const TOOL_NAMES = [
   'code_remove_repo',
   'code_get_symbol_context',
   'code_get_import_chain',
+  'code_find_callers',
+  'code_find_callees',
+  'code_get_impact_analysis',
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
