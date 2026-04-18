@@ -24,12 +24,12 @@ export const IndexRepoSchema = z.object({
 
 export const FindReferencesSchema = z.object({
   symbol_name: z.string().min(1).describe('Exact symbol name to find'),
-  repo_id: z.string().optional().nullable(),
+  repo_id: z.string().optional().nullable().describe('Filter by repo. Get IDs from code_list_repos.'),
 });
 
 export const SearchFilesSchema = z.object({
   query: z.string().min(1).describe('Partial file path to search'),
-  repo_id: z.string().optional().nullable(),
+  repo_id: z.string().optional().nullable().describe('Filter by repo. Get IDs from code_list_repos.'),
   limit: z.number().int().min(1).max(200).default(50),
   offset: z.number().int().min(0).default(0).describe('Pagination offset. Use next_offset from previous response.'),
 });
@@ -40,7 +40,7 @@ export const GetFileSymbolsSchema = z.object({
 });
 
 export const ExplainSymbolSchema = z.object({
-  symbol_id: z.string().min(1),
+  symbol_id: z.string().min(1).describe('UUID from code_search_symbols or code_find_references'),
 });
 
 export const GetRepoStatsSchema = z.object({
@@ -54,7 +54,7 @@ export const RemoveRepoSchema = z.object({
 export const ListReposSchema = z.object({});
 
 export const GetSymbolContextSchema = z.object({
-  symbol_name: z.string().min(1),
+  symbol_name: z.string().min(1).describe('Exact or partial symbol name to look up'),
   depth: z.union([z.literal(1), z.literal(2), z.literal(3)]).optional().default(2),
 });
 

@@ -9,19 +9,19 @@ import type { InMemoryGraph } from '../graph/in-memory-graph.js';
 
 
 export const TOOL_NAMES = [
-  'search_symbols',
-  'get_symbol_detail',
-  'list_repos',
-  'register_repo',
-  'index_repo',
-  'find_references',
-  'search_files',
-  'get_file_symbols',
-  'explain_symbol',
-  'get_repo_stats',
-  'remove_repo',
-  'get_symbol_context',
-  'get_import_chain',
+  'code_search_symbols',
+  'code_get_symbol_detail',
+  'code_list_repos',
+  'code_register_repo',
+  'code_index_repo',
+  'code_find_references',
+  'code_search_files',
+  'code_get_file_symbols',
+  'code_explain_symbol',
+  'code_get_repo_stats',
+  'code_remove_repo',
+  'code_get_symbol_context',
+  'code_get_import_chain',
 ] as const;
 
 export type ToolName = (typeof TOOL_NAMES)[number];
@@ -42,7 +42,7 @@ export class CodeMcpServer {
   constructor(opts: McpServerOptions) {
     this.opts = opts;
     this.server = new McpServer(
-      { name: 'mcp-code1', version: '0.1.0' },
+      { name: 'code-intelligence-mcp-server', version: '0.1.0' },
       { capabilities: { tools: {}, resources: {} } },
     );
     registerTools(this.server, opts);

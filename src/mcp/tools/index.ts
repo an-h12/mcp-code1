@@ -39,7 +39,7 @@ export function registerTools(server: McpServer, opts: McpServerOptions): void {
 
   // ── Read-only tools ──────────────────────────────────────────
 
-  server.registerTool('search_symbols', {
+  server.registerTool('code_search_symbols', {
     description:
       'Fuzzy/FTS5 search for symbols by keyword or partial name. Returns multiple ranked matches. Use when you do NOT know the exact name; use find_references for exact lookup.',
     inputSchema: SearchSymbolsSchema,
@@ -53,7 +53,7 @@ export function registerTools(server: McpServer, opts: McpServerOptions): void {
     }
   });
 
-  server.registerTool('get_symbol_detail', {
+  server.registerTool('code_get_symbol_detail', {
     description:
       'Metadata-only lookup by symbol UUID: file path, line range, signature, kind. Does NOT include callers/callees (use get_symbol_context for graph). Does NOT call AI (use explain_symbol for AI summary).',
     inputSchema: GetSymbolDetailSchema,
@@ -67,7 +67,7 @@ export function registerTools(server: McpServer, opts: McpServerOptions): void {
     }
   });
 
-  server.registerTool('list_repos', {
+  server.registerTool('code_list_repos', {
     description: 'List all registered repositories with their IDs, names, and root paths.',
     inputSchema: {},
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -80,7 +80,7 @@ export function registerTools(server: McpServer, opts: McpServerOptions): void {
     }
   });
 
-  server.registerTool('find_references', {
+  server.registerTool('code_find_references', {
     description:
       'Exact-name lookup: returns every symbol definition matching the exact name, plus callers from the call graph (depth=1). Use search_symbols for fuzzy/keyword search.',
     inputSchema: FindReferencesSchema,
@@ -94,7 +94,7 @@ export function registerTools(server: McpServer, opts: McpServerOptions): void {
     }
   });
 
-  server.registerTool('search_files', {
+  server.registerTool('code_search_files', {
     description: 'Search for indexed files by partial path fragment. Returns file metadata (path, language, size).',
     inputSchema: SearchFilesSchema,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -107,7 +107,7 @@ export function registerTools(server: McpServer, opts: McpServerOptions): void {
     }
   });
 
-  server.registerTool('get_file_symbols', {
+  server.registerTool('code_get_file_symbols', {
     description: 'Get all symbols defined in a specific file, ordered by line number.',
     inputSchema: GetFileSymbolsSchema,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -120,7 +120,7 @@ export function registerTools(server: McpServer, opts: McpServerOptions): void {
     }
   });
 
-  server.registerTool('explain_symbol', {
+  server.registerTool('code_explain_symbol', {
     description:
       'AI-generated natural-language explanation of a symbol. Requires AI_API_KEY env var (local LLM via AI_API_BASE_URL); falls back to raw metadata if not configured. Prefer get_symbol_detail for pure metadata.',
     inputSchema: ExplainSymbolSchema,
@@ -134,7 +134,7 @@ export function registerTools(server: McpServer, opts: McpServerOptions): void {
     }
   });
 
-  server.registerTool('get_repo_stats', {
+  server.registerTool('code_get_repo_stats', {
     description: 'Get indexing statistics for a repository: file count, symbol count, language breakdown.',
     inputSchema: GetRepoStatsSchema,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -147,7 +147,7 @@ export function registerTools(server: McpServer, opts: McpServerOptions): void {
     }
   });
 
-  server.registerTool('get_symbol_context', {
+  server.registerTool('code_get_symbol_context', {
     description:
       'Graph view of a symbol: who calls it (callers, incoming) and what it calls (callees, outgoing), up to BFS depth 3. Use depth=1 for direct only. Response includes blastRadius = callers.length (who breaks if you change this) and impactCount = callers+callees total.',
     inputSchema: GetSymbolContextSchema,
@@ -162,7 +162,7 @@ export function registerTools(server: McpServer, opts: McpServerOptions): void {
     }
   });
 
-  server.registerTool('get_import_chain', {
+  server.registerTool('code_get_import_chain', {
     description: 'Get the import dependency chain starting from a file (IMPORTS edges, BFS). Shows what a file depends on transitively.',
     inputSchema: GetImportChainSchema,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -178,7 +178,7 @@ export function registerTools(server: McpServer, opts: McpServerOptions): void {
 
   // ── Mutating tools ───────────────────────────────────────────
 
-  server.registerTool('register_repo', {
+  server.registerTool('code_register_repo', {
     description: 'Register a new repository for indexing. Returns the repo ID for use with other tools.',
     inputSchema: RegisterRepoSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -191,7 +191,7 @@ export function registerTools(server: McpServer, opts: McpServerOptions): void {
     }
   });
 
-  server.registerTool('index_repo', {
+  server.registerTool('code_index_repo', {
     description: 'Trigger full indexing of a repository. This may take a while for large repos.',
     inputSchema: IndexRepoSchema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
@@ -206,7 +206,7 @@ export function registerTools(server: McpServer, opts: McpServerOptions): void {
 
   // ── Destructive tools ────────────────────────────────────────
 
-  server.registerTool('remove_repo', {
+  server.registerTool('code_remove_repo', {
     description: 'Remove a repository and all its indexed data from the registry. This action is irreversible.',
     inputSchema: RemoveRepoSchema,
     annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false },
