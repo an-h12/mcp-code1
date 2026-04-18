@@ -13,6 +13,7 @@ import {
   RemoveRepoSchema,
   GetSymbolContextSchema,
   GetImportChainSchema,
+  ListReposSchema,
   SearchSymbolsOutputSchema,
   GetSymbolDetailOutputSchema,
   FindReferencesOutputSchema,
@@ -93,13 +94,13 @@ export function registerTools(server: McpServer, opts: McpServerOptions): void {
 
   server.registerTool('code_list_repos', {
     description: 'List all registered repositories with their IDs, names, and root paths.',
-    inputSchema: {},
+    inputSchema: ListReposSchema,
     outputSchema: ListReposOutputSchema,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   }, async () => {
     try {
       const repos = listRepos(opts.registry);
-      return { structuredContent: repos as unknown as Record<string, unknown>, content: [{ type: 'text' as const, text: JSON.stringify(repos, null, 2) }] };
+      return { structuredContent: { repos }, content: [{ type: 'text' as const, text: JSON.stringify(repos, null, 2) }] };
     } catch (e) {
       return { content: [{ type: 'text' as const, text: errText(e) }], isError: true };
     }
@@ -114,7 +115,7 @@ export function registerTools(server: McpServer, opts: McpServerOptions): void {
   }, async ({ symbol_name, repo_id }) => {
     try {
       const refs = findReferences(opts.db, { symbolName: symbol_name, repoId: repo_id ?? null }, opts.graph, opts.repoId);
-      return { structuredContent: refs as unknown as Record<string, unknown>, content: [{ type: 'text' as const, text: JSON.stringify(refs, null, 2) }] };
+      return { structuredContent: { references: refs }, content: [{ type: 'text' as const, text: JSON.stringify(refs, null, 2) }] };
     } catch (e) {
       return { content: [{ type: 'text' as const, text: errText(e) }], isError: true };
     }
@@ -142,7 +143,7 @@ export function registerTools(server: McpServer, opts: McpServerOptions): void {
   }, async ({ repo_id, rel_path }) => {
     try {
       const symbols = getFileSymbols(opts.db, { repoId: repo_id, relPath: rel_path });
-      return { structuredContent: symbols as unknown as Record<string, unknown>, content: [{ type: 'text' as const, text: JSON.stringify(symbols, null, 2) }] };
+      return { structuredContent: { symbols }, content: [{ type: 'text' as const, text: JSON.stringify(symbols, null, 2) }] };
     } catch (e) {
       return { content: [{ type: 'text' as const, text: errText(e) }], isError: true };
     }

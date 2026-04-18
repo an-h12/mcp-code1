@@ -89,10 +89,12 @@ export const GetSymbolDetailOutputSchema = z.object({
   id: z.string(),
   name: z.string(),
   kind: z.string(),
+  repoId: z.string(),
   filePath: z.string(),
   startLine: z.number(),
   endLine: z.number(),
   signature: z.string(),
+  docComment: z.string(),
 });
 
 const ReferenceResultSchema = z.object({
@@ -105,7 +107,9 @@ const ReferenceResultSchema = z.object({
   referenceType: z.enum(['definition', 'caller']),
 });
 
-export const FindReferencesOutputSchema = z.array(ReferenceResultSchema);
+export const FindReferencesOutputSchema = z.object({
+  references: z.array(ReferenceResultSchema),
+});
 
 const GraphNodeSchema = z.object({
   symbolId: z.string(),
@@ -150,22 +154,31 @@ export const SearchFilesOutputSchema = z.object({
   next_offset: z.number(),
 });
 
-export const GetFileSymbolsOutputSchema = z.array(SymbolResultSchema);
+export const GetFileSymbolsOutputSchema = z.object({
+  symbols: z.array(SymbolResultSchema),
+});
 
 const RepoResultSchema = z.object({
   id: z.string(),
   name: z.string(),
   rootPath: z.string(),
-  language: z.string().optional(),
+  language: z.string(),
+  indexedAt: z.string().nullable(),
+  fileCount: z.number(),
+  symbolCount: z.number(),
+  createdAt: z.string(),
 });
 
-export const ListReposOutputSchema = z.array(RepoResultSchema);
+export const ListReposOutputSchema = z.object({
+  repos: z.array(RepoResultSchema),
+});
 
 export const GetRepoStatsOutputSchema = z.object({
   repoId: z.string(),
   fileCount: z.number(),
   symbolCount: z.number(),
-  languages: z.array(z.object({ language: z.string().nullable(), count: z.number() })),
+  lastIndexedAt: z.string().nullable(),
+  languageBreakdown: z.record(z.string(), z.number()),
 });
 
 export const ExplainSymbolOutputSchema = z.object({
@@ -177,13 +190,19 @@ export const RegisterRepoOutputSchema = z.object({
   id: z.string(),
   name: z.string(),
   rootPath: z.string(),
-  language: z.string().optional(),
+  language: z.string(),
+  indexedAt: z.string().nullable(),
+  fileCount: z.number(),
+  symbolCount: z.number(),
+  createdAt: z.string(),
 });
 
 export const IndexRepoOutputSchema = z.object({
   repoId: z.string(),
-  fileCount: z.number(),
-  symbolCount: z.number(),
+  filesIndexed: z.number(),
+  filesSkipped: z.number(),
+  symbolsAdded: z.number(),
+  symbolsRemoved: z.number(),
   durationMs: z.number(),
 });
 
