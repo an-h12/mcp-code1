@@ -149,8 +149,9 @@ export class App {
       repoId: this.repoId,
     });
 
-    await this.mcpServer.connectStdio();
-    this.log.info('MCP server listening on stdio');
+    const port = this.config.mcpPort;
+    await this.mcpServer.connectHttp(port);
+    this.log.info({ port }, 'MCP server listening on HTTP — connect Cline to http://127.0.0.1:' + port + '/mcp');
   }
 
   async stop(): Promise<void> {

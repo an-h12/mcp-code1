@@ -2,7 +2,7 @@
 
 MCP (Model Context Protocol) server cung cấp khả năng **index & truy vấn codebase** cho AI coding assistant (Cline, Claude Code, Cursor...).
 
-Server chạy qua **stdio transport**, index codebase bằng tree-sitter (JS/TS/Python/Go/Rust/C/C++/Java/C#), lưu trong SQLite (FTS5), và expose **16 tools + 3 prompts** để tra cứu symbol, call graph, blast radius analysis, import chain, và giải thích code bằng AI.
+Server chạy qua **Streamable HTTP transport** (localhost), index codebase bằng tree-sitter (JS/TS/Python/Go/Rust/C/C++/Java/C#), lưu trong SQLite (FTS5), và expose **16 tools + 3 prompts** để tra cứu symbol, call graph, blast radius analysis, import chain, và giải thích code bằng AI.
 
 ---
 
@@ -43,6 +43,21 @@ npm run build
 
 ---
 
+## Chạy server
+
+Server chạy như một HTTP service trên localhost. Khởi động trước khi dùng Cline:
+
+```bash
+# Windows
+set REPO_ROOT=C:\path\to\your-project
+set DB_PATH=C:\mcp-data\project.db
+node C:\path\to\mcp-code1\dist\index.js
+
+# Đổi port nếu cần (default: 3000)
+set MCP_PORT=8000
+node C:\path\to\mcp-code1\dist\index.js
+```
+
 ## Cấu hình cho Cline (VS Code)
 
 Mở `cline_mcp_settings.json` bằng Command Palette → **Cline: Open MCP Settings**:
@@ -51,13 +66,8 @@ Mở `cline_mcp_settings.json` bằng Command Palette → **Cline: Open MCP Sett
 {
   "mcpServers": {
     "code-intelligence": {
-      "command": "node",
-      "args": ["C:/path/to/mcp-code1/dist/index.js"],
-      "env": {
-        "REPO_ROOT": "C:/path/to/your-project",
-        "DB_PATH": "C:/mcp-data/project.db",
-        "LOG_LEVEL": "info"
-      },
+      "type": "streamableHttp",
+      "url": "http://127.0.0.1:3000/mcp",
       "disabled": false,
       "autoApprove": [
         "code_search_symbols",
@@ -83,7 +93,7 @@ Mở `cline_mcp_settings.json` bằng Command Palette → **Cline: Open MCP Sett
 }
 ```
 
-> **Lưu ý breaking change:** Tên server đã đổi từ `mcp-code1` → `code-intelligence` và tất cả tool đã có prefix `code_`. Nếu bạn đang dùng phiên bản cũ, cần cập nhật `autoApprove` list như trên.
+> **Lưu ý breaking change:** Server đã chuyển từ stdio sang **Streamable HTTP transport**. Cần chạy server thủ công trước khi dùng Cline, và cấu hình Cline dùng `type: streamableHttp` thay vì `command`/`args`.
 
 ### Biến môi trường
 
@@ -91,6 +101,7 @@ Mở `cline_mcp_settings.json` bằng Command Palette → **Cline: Open MCP Sett
 |------|----------|-------|
 | `REPO_ROOT` | **Có** | Thư mục gốc repo cần index (path tuyệt đối) |
 | `DB_PATH` | **Có** | Đường dẫn file SQLite lưu index |
+| `MCP_PORT` | Không | Port HTTP server (default: `3000`) |
 | `LOG_LEVEL` | Không | `trace`/`debug`/`info`/`warn`/`error`/`fatal` (default: `info`) |
 | `AI_API_KEY` | Không | API key cho LLM (dùng cho `code_explain_symbol`) |
 | `AI_API_BASE_URL` | Không | Base URL LLM endpoint (ví dụ: `http://localhost:11434/v1`) |

@@ -1,3 +1,4 @@
+import type { Server as HttpServer } from 'node:http';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { Db } from '../db/index.js';
 import type { RepoRegistry } from '../registry.js';
@@ -42,6 +43,7 @@ export type McpServerOptions = {
 export class CodeMcpServer {
   private server: McpServer;
   private opts: McpServerOptions;
+  private _httpServer: HttpServer | null = null;
 
   constructor(opts: McpServerOptions) {
     this.opts = opts;
@@ -54,15 +56,39 @@ export class CodeMcpServer {
     registerPrompts(this.server, opts);
   }
 
-  async connectStdio(): Promise<void> {
-    const { StdioServerTransport } = await import(
-      '@modelcontextprotocol/sdk/server/stdio.js'
+  async connectHttp(port: number): Promise<void> {
+    const http = await import('node:http');
+    const { StreamableHTTPServerTransport } = await import(
+      '@modelcontextprotocol/sdk/server/streamableHttp.js'
     );
-    const transport = new StdioServerTransport();
-    await this.server.connect(transport);
+
+    const transport = new StreamableHTTPServerTransport({});
+
+    const httpServer = http.createServer((req, res) => {
+      if (req.url === '/mcp') {
+        transport.handleRequest(req, res);
+      } else {
+        res.writeHead(404).end('Not found');
+      }
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    await this.server.connect(transport as any);
+
+    await new Promise<void>((resolve, reject) =>
+      httpServer.listen(port, '127.0.0.1', () => resolve()).on('error', reject),
+    );
+
+    this._httpServer = httpServer;
   }
 
   async close(): Promise<void> {
+    if (this._httpServer) {
+      await new Promise<void>((resolve, reject) =>
+        this._httpServer!.close((err) => (err ? reject(err) : resolve())),
+      );
+      this._httpServer = null;
+    }
     await this.server.close();
   }
 

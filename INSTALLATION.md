@@ -111,21 +111,46 @@ Kết quả: thư mục `dist/` với entrypoint `dist/index.js`.
 
 Dùng Command Palette (`Ctrl+Shift+P`) → gõ **`Cline: Open MCP Settings`**
 
-### Bước 4.3 — Thêm cấu hình MCP server
+### Bước 4.3 — Chạy server
 
-Paste nội dung sau vào file, **thay thế các path theo máy của bạn**:
+Server chạy như HTTP service trên localhost. Mở terminal và chạy trước khi dùng Cline:
+
+**Windows PowerShell:**
+```powershell
+$env:REPO_ROOT = "C:\path\to\your-project"
+$env:DB_PATH   = "C:\path\to\mcp-data\project.db"
+node C:\path\to\mcp-code1\dist\index.js
+```
+
+**Windows CMD:**
+```cmd
+set REPO_ROOT=C:\path\to\your-project
+set DB_PATH=C:\path\to\mcp-data\project.db
+node C:\path\to\mcp-code1\dist\index.js
+```
+
+**macOS / Linux:**
+```bash
+REPO_ROOT=/path/to/your-project DB_PATH=/path/to/mcp-data/project.db node /path/to/mcp-code1/dist/index.js
+```
+
+Kết quả mong đợi:
+```
+MCP server listening on HTTP — connect Cline to http://127.0.0.1:3000/mcp
+```
+
+> **Đổi port:** Set `MCP_PORT=8000` trước khi chạy nếu port 3000 đã dùng.
+
+### Bước 4.4 — Thêm cấu hình MCP server vào Cline
+
+Paste nội dung sau vào file, **thay URL nếu đã đổi port**:
 
 ```json
 {
   "mcpServers": {
     "code-intelligence": {
-      "command": "node",
-      "args": ["C:/path/to/mcp-code1/dist/index.js"],
-      "env": {
-        "REPO_ROOT": "C:/path/to/your-project",
-        "DB_PATH": "C:/path/to/mcp-data/project.db",
-        "LOG_LEVEL": "info"
-      },
+      "type": "streamableHttp",
+      "url": "http://127.0.0.1:3000/mcp",
       "disabled": false,
       "autoApprove": [
         "code_search_symbols",
@@ -155,18 +180,14 @@ Paste nội dung sau vào file, **thay thế các path theo máy của bạn**:
 
 | Trường | Giá trị cần thay | Ví dụ |
 |--------|-----------------|-------|
-| `args[0]` | Đường dẫn tuyệt đối đến `dist/index.js` | `C:/Users/YourName/mcp-code1/dist/index.js` |
-| `REPO_ROOT` | Thư mục gốc project cần index | `C:/Users/YourName/projects/my-app` |
-| `DB_PATH` | Đường dẫn lưu file SQLite | `C:/Users/YourName/mcp-data/my-app.db` |
+| `url` | URL server nếu đổi port | `http://127.0.0.1:8000/mcp` |
 
-> **Lưu ý Windows**: Dùng `/` (forward slash) trong JSON, **không** dùng `\` đơn.
+> **Lưu ý:** Server phải đang chạy (Bước 4.3) trước khi Cline kết nối. Env vars (`REPO_ROOT`, `DB_PATH`) được set khi chạy server, không cần trong config Cline.
 
-> **`DB_PATH`**: Có thể đặt bất kỳ đâu. Thư mục chứa file sẽ được tạo tự động. Mỗi project nên dùng một file `.db` riêng.
-
-### Bước 4.4 — Lưu và kiểm tra
+### Bước 4.5 — Lưu và kiểm tra
 
 1. Lưu file config (`Ctrl+S`)
-2. Cline tự động khởi động MCP server
+2. Đảm bảo server đang chạy (Bước 4.3)
 3. Mở Cline panel → tab **MCP Servers** → kiểm tra **code-intelligence** hiển thị 🟢 **Connected** với **16 tools**
 
 ---
@@ -235,24 +256,14 @@ Thêm vào file `.ai/settings.json` trong project hoặc `~/.ai/settings.json` (
 {
   "mcpServers": {
     "code-intelligence": {
-      "command": "node",
-      "args": ["/path/to/mcp-code1/dist/index.js"],
-      "env": {
-        "REPO_ROOT": "/path/to/your-project",
-        "DB_PATH": "/path/to/mcp-data/project.db",
-        "LOG_LEVEL": "info"
-      }
+      "type": "streamableHttp",
+      "url": "http://127.0.0.1:3000/mcp"
     }
   }
 }
 ```
 
-Kiểm tra:
-
-```bash
-ai mcp list
-# Phải thấy: code-intelligence — node /path/to/dist/index.js
-```
+> **Lưu ý:** Chạy server trước khi dùng AI CLI (xem Bước 4.3).
 
 ---
 
@@ -308,20 +319,14 @@ List all prompts from code-intelligence MCP server
 
 ### Cách 2 — Smoke test thủ công
 
-**Windows PowerShell:**
-```powershell
-$env:REPO_ROOT = "C:\path\to\your-project"
-$env:DB_PATH   = "C:\mcp-data\test.db"
-$env:LOG_LEVEL = "info"
+Chạy server, sau đó gửi initialize request bằng curl:
 
-$init = '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}'
-$init | node C:\path\to\mcp-code1\dist\index.js
-```
-
-**macOS / Linux:**
+**Windows PowerShell / macOS / Linux:**
 ```bash
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' \
-  | REPO_ROOT=/path/to/project DB_PATH=/tmp/test.db node /path/to/mcp-code1/dist/index.js
+curl -s -X POST http://127.0.0.1:3000/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}'
 ```
 
 **Kết quả mong đợi:**
@@ -348,19 +353,30 @@ npm test
 
 ## 9. Cấu hình nhiều repo
 
-Mỗi MCP server instance phục vụ 1 repo. Để index nhiều repo, khai báo nhiều entry với key khác nhau:
+Mỗi MCP server instance phục vụ 1 repo. Để index nhiều repo, chạy nhiều server instance trên port khác nhau:
 
+**Chạy server:**
+```bash
+# Backend (port 3000)
+set REPO_ROOT=C:\Code\my-backend
+set DB_PATH=C:\mcp-data\backend.db
+set MCP_PORT=3000
+node C:\mcp-code1\dist\index.js
+
+# Frontend (port 3001 — trong terminal khác)
+set REPO_ROOT=C:\Code\my-frontend
+set DB_PATH=C:\mcp-data\frontend.db
+set MCP_PORT=3001
+node C:\mcp-code1\dist\index.js
+```
+
+**Cấu hình Cline:**
 ```json
 {
   "mcpServers": {
     "code-backend": {
-      "command": "node",
-      "args": ["C:/mcp-code1/dist/index.js"],
-      "env": {
-        "REPO_ROOT": "C:/Code/my-backend",
-        "DB_PATH":   "C:/mcp-data/backend.db",
-        "LOG_LEVEL": "info"
-      },
+      "type": "streamableHttp",
+      "url": "http://127.0.0.1:3000/mcp",
       "disabled": false,
       "autoApprove": [
         "code_search_symbols", "code_get_symbol_detail", "code_list_repos",
@@ -370,13 +386,8 @@ Mỗi MCP server instance phục vụ 1 repo. Để index nhiều repo, khai bá
       ]
     },
     "code-frontend": {
-      "command": "node",
-      "args": ["C:/mcp-code1/dist/index.js"],
-      "env": {
-        "REPO_ROOT": "C:/Code/my-frontend",
-        "DB_PATH":   "C:/mcp-data/frontend.db",
-        "LOG_LEVEL": "info"
-      },
+      "type": "streamableHttp",
+      "url": "http://127.0.0.1:3001/mcp",
       "disabled": false,
       "autoApprove": [
         "code_search_symbols", "code_get_symbol_detail", "code_list_repos",
@@ -408,11 +419,10 @@ Mỗi MCP server instance phục vụ 1 repo. Để index nhiều repo, khai bá
 
 | Triệu chứng | Nguyên nhân | Giải pháp |
 |------------|-------------|-----------|
-| 🔴 Disconnected | Path `dist/index.js` sai | Kiểm tra đường dẫn trong `args[0]` — dùng path tuyệt đối |
-| 🔴 Disconnected | Chưa build | Chạy `npm run build` |
-| 🔴 Disconnected | `REPO_ROOT` không tồn tại | Kiểm tra thư mục tồn tại, dùng path tuyệt đối |
-| Hiển thị 0 tools | Server key cũ (`mcp-code1`) | Đổi key thành `code-intelligence` và cập nhật `autoApprove` |
-| Tools không auto-approve | Tên tool thiếu prefix | Tất cả tên trong `autoApprove` phải có prefix `code_` |
+| 🔴 Disconnected | Server không chạy | Chạy server trước (Bước 4.3) |
+| 🔴 Disconnected | URL sai trong config Cline | Kiểm tra `url` = `http://127.0.0.1:3000/mcp` |
+| 🔴 Disconnected | Port đã bị chiếm | Đổi `MCP_PORT` hoặc kill process cũ |
+| Hiển thị 0 tools | Config dùng `command`/`args` cũ | Đổi sang `type: streamableHttp` + `url` |
 
 ### Lỗi runtime
 
@@ -450,14 +460,17 @@ cd mcp-code1
 npm install
 npm run build
 
+# Chạy server
+set REPO_ROOT=C:\path\to\your-project
+set DB_PATH=C:\mcp-data\project.db
+node dist\index.js
+
 # Chạy test
 npm test
 
-# Smoke test thủ công (macOS/Linux)
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' \
-  | REPO_ROOT=/path/to/project DB_PATH=/tmp/test.db node dist/index.js
-
-# Smoke test thủ công (Windows PowerShell)
-$env:REPO_ROOT="C:\path\to\project"; $env:DB_PATH="C:\tmp\test.db"
-'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' | node dist\index.js
+# Smoke test (curl)
+curl -s -X POST http://127.0.0.1:3000/mcp \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json, text/event-stream" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}'
 ```
