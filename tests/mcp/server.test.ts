@@ -30,6 +30,9 @@ describe('McpServer', () => {
     expect(TOOL_NAMES).toContain('code_remove_repo');
     expect(TOOL_NAMES).toContain('code_get_symbol_context');
     expect(TOOL_NAMES).toContain('code_get_import_chain');
-    expect(TOOL_NAMES).toHaveLength(13);
+    expect(TOOL_NAMES).toContain('code_find_callers');
+    expect(TOOL_NAMES).toContain('code_find_callees');
+    expect(TOOL_NAMES).toContain('code_get_impact_analysis');
+    expect(TOOL_NAMES).toHaveLength(16);
   });
 });

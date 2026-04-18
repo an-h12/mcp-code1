@@ -278,4 +278,28 @@ describe('MCP Protocol Compliance', () => {
       }
     });
   });
+
+  describe('Prompts', () => {
+    it('prompts/list returns 3 prompts', async () => {
+      const result = await rpc(sdkServer, 'prompts/list');
+      expect(result).toHaveProperty('prompts');
+      const prompts = (result as { prompts: Array<{ name: string }> }).prompts;
+      expect(prompts).toHaveLength(3);
+      const names = prompts.map((p) => p.name);
+      expect(names).toContain('code_analyze_symbol_impact');
+      expect(names).toContain('code_onboard_repo');
+      expect(names).toContain('code_explain_codebase');
+    });
+
+    it('code_analyze_symbol_impact has required argument', async () => {
+      const result = await rpc(sdkServer, 'prompts/list');
+      const prompts = (result as { prompts: Array<{ name: string; arguments?: Array<{ name: string; required?: boolean }> }> }).prompts;
+      const analyzePrompt = prompts.find((p) => p.name === 'code_analyze_symbol_impact');
+      expect(analyzePrompt).toBeDefined();
+      const args = analyzePrompt!.arguments ?? [];
+      const symbolArg = args.find((a) => a.name === 'symbol_name');
+      expect(symbolArg).toBeDefined();
+      expect(symbolArg!.required).toBe(true);
+    });
+  });
 });

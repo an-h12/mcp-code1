@@ -4,6 +4,7 @@ import type { RepoRegistry } from '../registry.js';
 import type { Indexer } from '../indexer/indexer.js';
 import { registerTools } from './tools/index.js';
 import { registerResources } from './resources/index.js';
+import { registerPrompts } from './prompts/index.js';
 import type { AiConfig } from './ai-adapter.js';
 import type { InMemoryGraph } from '../graph/in-memory-graph.js';
 
@@ -46,10 +47,11 @@ export class CodeMcpServer {
     this.opts = opts;
     this.server = new McpServer(
       { name: 'code-intelligence-mcp-server', version: '0.1.0' },
-      { capabilities: { tools: {}, resources: {} } },
+      { capabilities: { tools: {}, resources: {}, prompts: {} } },
     );
     registerTools(this.server, opts);
     registerResources(this.server, opts);
+    registerPrompts(this.server, opts);
   }
 
   async connectStdio(): Promise<void> {
