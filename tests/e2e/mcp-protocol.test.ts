@@ -143,7 +143,7 @@ describe('MCP Protocol Compliance', () => {
   describe('tools/call response shape', () => {
     it('success response có content[] dạng {type, text}', async () => {
       const result = await rpc(sdkServer, 'tools/call', {
-        name: 'list_repos',
+        name: 'code_list_repos',
         arguments: {},
       });
       expect(result).toHaveProperty('content');
@@ -165,7 +165,7 @@ describe('MCP Protocol Compliance', () => {
     it('error response KHÔNG throw — Cline luôn nhận được JSON hợp lệ', async () => {
       // Server không được throw exception cho client; phải trả isError
       const result = await rpc(sdkServer, 'tools/call', {
-        name: 'search_symbols',
+        name: 'code_search_symbols',
         // thiếu 'query' required field
         arguments: {},
       });
@@ -177,7 +177,7 @@ describe('MCP Protocol Compliance', () => {
   describe('Zod input validation', () => {
     it('thiếu required field → isError', async () => {
       const result = await rpc(sdkServer, 'tools/call', {
-        name: 'search_symbols',
+        name: 'code_search_symbols',
         arguments: {}, // thiếu 'query'
       });
       expect(result.isError).toBe(true);
@@ -185,7 +185,7 @@ describe('MCP Protocol Compliance', () => {
 
     it('sai kiểu dữ liệu → isError', async () => {
       const result = await rpc(sdkServer, 'tools/call', {
-        name: 'search_symbols',
+        name: 'code_search_symbols',
         arguments: { query: 123 }, // phải là string
       });
       expect(result.isError).toBe(true);
@@ -193,7 +193,7 @@ describe('MCP Protocol Compliance', () => {
 
     it('depth ngoài range (>3) → isError', async () => {
       const result = await rpc(sdkServer, 'tools/call', {
-        name: 'get_symbol_context',
+        name: 'code_get_symbol_context',
         arguments: { symbol_name: 'foo', depth: 10 }, // max 3
       });
       expect(result.isError).toBe(true);
@@ -201,7 +201,7 @@ describe('MCP Protocol Compliance', () => {
 
     it('limit ngoài range → isError', async () => {
       const result = await rpc(sdkServer, 'tools/call', {
-        name: 'search_symbols',
+        name: 'code_search_symbols',
         arguments: { query: 'x', limit: 99999 }, // max 100
       });
       expect(result.isError).toBe(true);
@@ -212,7 +212,7 @@ describe('MCP Protocol Compliance', () => {
       // Đây là behavior đúng: SDK sẽ format thành JSON-RPC error cho Cline.
       await expect(
         rpc(sdkServer, 'tools/call', {
-          name: 'search_symbols',
+          name: 'code_search_symbols',
           arguments: null as any,
         }),
       ).rejects.toThrow();
@@ -223,7 +223,7 @@ describe('MCP Protocol Compliance', () => {
   describe('Concurrent requests', () => {
     it('xử lý 10 concurrent list_repos mà không crash', async () => {
       const results = await Promise.all(
-        Array.from({ length: 10 }, () => rpc(sdkServer, 'tools/call', { name: 'list_repos', arguments: {} })),
+        Array.from({ length: 10 }, () => rpc(sdkServer, 'tools/call', { name: 'code_list_repos', arguments: {} })),
       );
       expect(results).toHaveLength(10);
       for (const r of results) {
@@ -233,9 +233,9 @@ describe('MCP Protocol Compliance', () => {
 
     it('xử lý mixed concurrent tool calls', async () => {
       const calls = [
-        rpc(sdkServer, 'tools/call', { name: 'list_repos', arguments: {} }),
-        rpc(sdkServer, 'tools/call', { name: 'search_symbols', arguments: { query: 'x' } }),
-        rpc(sdkServer, 'tools/call', { name: 'search_files', arguments: { query: 'y' } }),
+        rpc(sdkServer, 'tools/call', { name: 'code_list_repos', arguments: {} }),
+        rpc(sdkServer, 'tools/call', { name: 'code_search_symbols', arguments: { query: 'x' } }),
+        rpc(sdkServer, 'tools/call', { name: 'code_search_files', arguments: { query: 'y' } }),
         rpc(sdkServer, 'tools/list'),
         rpc(sdkServer, 'tools/call', { name: 'unknown', arguments: {} }),
       ];
@@ -251,7 +251,7 @@ describe('MCP Protocol Compliance', () => {
   describe('JSON serialization', () => {
     it('text content JSON-parseable khi tool trả object', async () => {
       const result = await rpc(sdkServer, 'tools/call', {
-        name: 'list_repos',
+        name: 'code_list_repos',
         arguments: {},
       });
       expect(() => JSON.parse(result.content[0].text)).not.toThrow();
@@ -259,7 +259,7 @@ describe('MCP Protocol Compliance', () => {
 
     it('full response có thể JSON.stringify (Cline wire format)', async () => {
       const result = await rpc(sdkServer, 'tools/call', {
-        name: 'list_repos',
+        name: 'code_list_repos',
         arguments: {},
       });
       expect(() => JSON.stringify(result)).not.toThrow();
@@ -276,6 +276,30 @@ describe('MCP Protocol Compliance', () => {
         expect(res).toHaveProperty('uri');
         expect(res).toHaveProperty('name');
       }
+    });
+  });
+
+  describe('Prompts', () => {
+    it('prompts/list returns 3 prompts', async () => {
+      const result = await rpc(sdkServer, 'prompts/list');
+      expect(result).toHaveProperty('prompts');
+      const prompts = (result as { prompts: Array<{ name: string }> }).prompts;
+      expect(prompts).toHaveLength(3);
+      const names = prompts.map((p) => p.name);
+      expect(names).toContain('code_analyze_symbol_impact');
+      expect(names).toContain('code_onboard_repo');
+      expect(names).toContain('code_explain_codebase');
+    });
+
+    it('code_analyze_symbol_impact has required argument', async () => {
+      const result = await rpc(sdkServer, 'prompts/list');
+      const prompts = (result as { prompts: Array<{ name: string; arguments?: Array<{ name: string; required?: boolean }> }> }).prompts;
+      const analyzePrompt = prompts.find((p) => p.name === 'code_analyze_symbol_impact');
+      expect(analyzePrompt).toBeDefined();
+      const args = analyzePrompt!.arguments ?? [];
+      const symbolArg = args.find((a) => a.name === 'symbol_name');
+      expect(symbolArg).toBeDefined();
+      expect(symbolArg!.required).toBe(true);
     });
   });
 });

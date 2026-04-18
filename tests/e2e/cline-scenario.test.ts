@@ -185,16 +185,16 @@ describe('E2E: Cline gọi MCP tools — kịch bản thực tế', () => {
     expect(result.tools).toHaveLength(13);
 
     const names = result.tools.map((t) => t.name);
-    expect(names).toContain('search_symbols');
-    expect(names).toContain('get_symbol_context');
-    expect(names).toContain('get_import_chain');
-    expect(names).toContain('explain_symbol');
-    expect(names).toContain('list_repos');
+    expect(names).toContain('code_search_symbols');
+    expect(names).toContain('code_get_symbol_context');
+    expect(names).toContain('code_get_import_chain');
+    expect(names).toContain('code_explain_symbol');
+    expect(names).toContain('code_list_repos');
   });
 
   // ─── 2. list_repos — Cline check xem repo nào đã được index ────
   it('list_repos trả về repo fixture đã đăng ký', async () => {
-    const result = await callTool(sdkServer, 'list_repos');
+    const result = await callTool(sdkServer, 'code_list_repos');
     expect(result.isError).toBeFalsy();
 
     const repos = JSON.parse(result.content[0]!.text);
@@ -204,7 +204,7 @@ describe('E2E: Cline gọi MCP tools — kịch bản thực tế', () => {
 
   // ─── 3. search_symbols — Cline tìm symbol theo keyword ─────────
   it('search_symbols tìm được "UserService" bằng keyword "user"', async () => {
-    const result = await callTool(sdkServer, 'search_symbols', {
+    const result = await callTool(sdkServer, 'code_search_symbols', {
       query: 'user',
       limit: 10,
     });
@@ -218,7 +218,7 @@ describe('E2E: Cline gọi MCP tools — kịch bản thực tế', () => {
 
   // ─── 4. find_references — Cline tìm mọi nơi symbol xuất hiện ──
   it('find_references tìm mọi chỗ "parseId" xuất hiện', async () => {
-    const result = await callTool(sdkServer, 'find_references', {
+    const result = await callTool(sdkServer, 'code_find_references', {
       symbol_name: 'parseId',
     });
     expect(result.isError).toBeFalsy();
@@ -231,12 +231,12 @@ describe('E2E: Cline gọi MCP tools — kịch bản thực tế', () => {
   // ─── 5. get_symbol_detail — Cline xem chi tiết symbol bằng UUID ─
   it('get_symbol_detail trả về metadata đúng cho symbol cụ thể', async () => {
     // Lấy symbol ID trước
-    const searchResult = await callTool(sdkServer, 'search_symbols', { query: 'formatDate', limit: 1 });
+    const searchResult = await callTool(sdkServer, 'code_search_symbols', { query: 'formatDate', limit: 1 });
     const symbols = JSON.parse(searchResult.content[0]!.text);
     expect(symbols.length).toBeGreaterThanOrEqual(1);
     const symbolId = symbols[0].id;
 
-    const result = await callTool(sdkServer, 'get_symbol_detail', { symbol_id: symbolId });
+    const result = await callTool(sdkServer, 'code_get_symbol_detail', { symbol_id: symbolId });
     expect(result.isError).toBeFalsy();
 
     const detail = JSON.parse(result.content[0]!.text);
@@ -247,7 +247,7 @@ describe('E2E: Cline gọi MCP tools — kịch bản thực tế', () => {
 
   // ─── 6. get_symbol_detail — trả null cho ID không tồn tại ──────
   it('get_symbol_detail trả null cho symbol_id không tồn tại', async () => {
-    const result = await callTool(sdkServer, 'get_symbol_detail', {
+    const result = await callTool(sdkServer, 'code_get_symbol_detail', {
       symbol_id: '00000000-0000-0000-0000-000000000000',
     });
     expect(result.isError).toBeFalsy();
@@ -256,7 +256,7 @@ describe('E2E: Cline gọi MCP tools — kịch bản thực tế', () => {
 
   // ─── 7. search_files — Cline tìm file theo path fragment ───────
   it('search_files tìm được file "api.ts"', async () => {
-    const result = await callTool(sdkServer, 'search_files', { query: 'api' });
+    const result = await callTool(sdkServer, 'code_search_files', { query: 'api' });
     expect(result.isError).toBeFalsy();
 
     const files = JSON.parse(result.content[0]!.text);
@@ -265,7 +265,7 @@ describe('E2E: Cline gọi MCP tools — kịch bản thực tế', () => {
 
   // ─── 8. get_file_symbols — Cline liệt kê symbol trong 1 file ──
   it('get_file_symbols liệt kê tất cả symbol trong user-service.ts', async () => {
-    const result = await callTool(sdkServer, 'get_file_symbols', {
+    const result = await callTool(sdkServer, 'code_get_file_symbols', {
       repo_id: repoId,
       rel_path: 'user-service.ts',
     });
@@ -279,7 +279,7 @@ describe('E2E: Cline gọi MCP tools — kịch bản thực tế', () => {
 
   // ─── 9. get_repo_stats — Cline kiểm tra trạng thái index ──────
   it('get_repo_stats trả về thống kê đúng', async () => {
-    const result = await callTool(sdkServer, 'get_repo_stats', { repo_id: repoId });
+    const result = await callTool(sdkServer, 'code_get_repo_stats', { repo_id: repoId });
     expect(result.isError).toBeFalsy();
 
     const stats = JSON.parse(result.content[0]!.text);
@@ -289,19 +289,19 @@ describe('E2E: Cline gọi MCP tools — kịch bản thực tế', () => {
 
   // ─── 10. explain_symbol — fallback khi không có AI key ─────────
   it('explain_symbol trả về markdown fallback khi không có AI', async () => {
-    const searchResult = await callTool(sdkServer, 'search_symbols', { query: 'UserService', limit: 1 });
+    const searchResult = await callTool(sdkServer, 'code_search_symbols', { query: 'UserService', limit: 1 });
     const symbols = JSON.parse(searchResult.content[0]!.text);
     const symId = symbols[0]?.id;
     if (!symId) return; // skip nếu không tìm thấy
 
-    const result = await callTool(sdkServer, 'explain_symbol', { symbol_id: symId });
+    const result = await callTool(sdkServer, 'code_explain_symbol', { symbol_id: symId });
     expect(result.isError).toBeFalsy();
     expect(result.content[0]!.text).toContain('UserService');
   });
 
   // ─── 11. get_symbol_context — Cline xem graph callers/callees ──
   it('get_symbol_context trả về callers/callees cho "parseId"', async () => {
-    const result = await callTool(sdkServer, 'get_symbol_context', {
+    const result = await callTool(sdkServer, 'code_get_symbol_context', {
       symbol_name: 'parseId',
       depth: 2,
     });
@@ -321,7 +321,7 @@ describe('E2E: Cline gọi MCP tools — kịch bản thực tế', () => {
 
   // ─── 12. get_symbol_context — symbol không tồn tại ─────────────
   it('get_symbol_context trả lỗi cho symbol không tồn tại', async () => {
-    const result = await callTool(sdkServer, 'get_symbol_context', {
+    const result = await callTool(sdkServer, 'code_get_symbol_context', {
       symbol_name: 'nonExistentSymbol12345',
     });
     expect(result.isError).toBe(true);
@@ -330,7 +330,7 @@ describe('E2E: Cline gọi MCP tools — kịch bản thực tế', () => {
 
   // ─── 13. get_import_chain — Cline xem dependency chain ─────────
   it('get_import_chain trả về chain import từ api.ts', async () => {
-    const result = await callTool(sdkServer, 'get_import_chain', {
+    const result = await callTool(sdkServer, 'code_get_import_chain', {
       file_path: 'api.ts',
       depth: 3,
     });
@@ -348,7 +348,7 @@ describe('E2E: Cline gọi MCP tools — kịch bản thực tế', () => {
 
   // ─── 14. get_import_chain — file không tồn tại ─────────────────
   it('get_import_chain trả lỗi cho file không tồn tại', async () => {
-    const result = await callTool(sdkServer, 'get_import_chain', {
+    const result = await callTool(sdkServer, 'code_get_import_chain', {
       file_path: 'nonexistent.ts',
     });
     expect(result.isError).toBe(true);
@@ -360,12 +360,12 @@ describe('E2E: Cline gọi MCP tools — kịch bản thực tế', () => {
     // Tạo một repo mới để xóa (không xóa fixture chính)
     const repo2 = registry.register({ name: 'to-remove', rootPath: '/tmp/to-remove' });
 
-    const result = await callTool(sdkServer, 'remove_repo', { repo_id: repo2.id });
+    const result = await callTool(sdkServer, 'code_remove_repo', { repo_id: repo2.id });
     expect(result.isError).toBeFalsy();
     expect(result.content[0]!.text).toContain('removed');
 
     // Verify đã xóa
-    const listResult = await callTool(sdkServer, 'list_repos');
+    const listResult = await callTool(sdkServer, 'code_list_repos');
     const repos = JSON.parse(listResult.content[0]!.text);
     expect(repos.every((r: any) => r.name !== 'to-remove')).toBe(true);
   });
@@ -379,7 +379,7 @@ describe('E2E: Cline gọi MCP tools — kịch bản thực tế', () => {
 
   // ─── 17. Zod validation — args sai format ──────────────────────
   it('gọi tool với args thiếu trả về lỗi Zod', async () => {
-    const result = await callTool(sdkServer, 'search_symbols', {});
+    const result = await callTool(sdkServer, 'code_search_symbols', {});
     // thiếu 'query' required field → Zod error
     expect(result.isError).toBe(true);
   });
@@ -387,7 +387,7 @@ describe('E2E: Cline gọi MCP tools — kịch bản thực tế', () => {
   // ─── 18. Full workflow: search → detail → context ──────────────
   it('full workflow: search → detail → context (mô phỏng Cline conversation)', async () => {
     // Step 1: Cline hỏi "tìm các function liên quan đến user"
-    const search = await callTool(sdkServer, 'search_symbols', {
+    const search = await callTool(sdkServer, 'code_search_symbols', {
       query: 'user',
       limit: 5,
     });
@@ -397,7 +397,7 @@ describe('E2E: Cline gọi MCP tools — kịch bản thực tế', () => {
 
     // Step 2: Cline xem chi tiết symbol đầu tiên
     const firstSymbol = searchResults[0];
-    const detail = await callTool(sdkServer, 'get_symbol_detail', {
+    const detail = await callTool(sdkServer, 'code_get_symbol_detail', {
       symbol_id: firstSymbol.id,
     });
     expect(detail.isError).toBeFalsy();
@@ -405,7 +405,7 @@ describe('E2E: Cline gọi MCP tools — kịch bản thực tế', () => {
     expect(detailResult.name).toBe(firstSymbol.name);
 
     // Step 3: Cline xem context graph để hiểu impact
-    const context = await callTool(sdkServer, 'get_symbol_context', {
+    const context = await callTool(sdkServer, 'code_get_symbol_context', {
       symbol_name: firstSymbol.name,
       depth: 2,
     });

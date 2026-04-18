@@ -17,19 +17,22 @@ describe('McpServer', () => {
 
   it('exposes expected tool names', async () => {
     const { TOOL_NAMES } = await import('../../src/mcp/server.js');
-    expect(TOOL_NAMES).toContain('search_symbols');
-    expect(TOOL_NAMES).toContain('get_symbol_detail');
-    expect(TOOL_NAMES).toContain('list_repos');
-    expect(TOOL_NAMES).toContain('register_repo');
-    expect(TOOL_NAMES).toContain('index_repo');
-    expect(TOOL_NAMES).toContain('find_references');
-    expect(TOOL_NAMES).toContain('search_files');
-    expect(TOOL_NAMES).toContain('get_file_symbols');
-    expect(TOOL_NAMES).toContain('explain_symbol');
-    expect(TOOL_NAMES).toContain('get_repo_stats');
-    expect(TOOL_NAMES).toContain('remove_repo');
-    expect(TOOL_NAMES).toContain('get_symbol_context');
-    expect(TOOL_NAMES).toContain('get_import_chain');
-    expect(TOOL_NAMES).toHaveLength(13);
+    expect(TOOL_NAMES).toContain('code_search_symbols');
+    expect(TOOL_NAMES).toContain('code_get_symbol_detail');
+    expect(TOOL_NAMES).toContain('code_list_repos');
+    expect(TOOL_NAMES).toContain('code_register_repo');
+    expect(TOOL_NAMES).toContain('code_index_repo');
+    expect(TOOL_NAMES).toContain('code_find_references');
+    expect(TOOL_NAMES).toContain('code_search_files');
+    expect(TOOL_NAMES).toContain('code_get_file_symbols');
+    expect(TOOL_NAMES).toContain('code_explain_symbol');
+    expect(TOOL_NAMES).toContain('code_get_repo_stats');
+    expect(TOOL_NAMES).toContain('code_remove_repo');
+    expect(TOOL_NAMES).toContain('code_get_symbol_context');
+    expect(TOOL_NAMES).toContain('code_get_import_chain');
+    expect(TOOL_NAMES).toContain('code_find_callers');
+    expect(TOOL_NAMES).toContain('code_find_callees');
+    expect(TOOL_NAMES).toContain('code_get_impact_analysis');
+    expect(TOOL_NAMES).toHaveLength(16);
   });
 });

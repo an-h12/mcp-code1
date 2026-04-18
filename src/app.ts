@@ -11,6 +11,7 @@ import { CodeMcpServer } from './mcp/server.js';
 import type { AiConfig } from './mcp/ai-adapter.js';
 import { InMemoryGraph } from './graph/in-memory-graph.js';
 import { ensureRepo } from './db/repo-registry.js';
+import { ContextEnricher } from './mcp/context-enricher.js';
 
 export class App {
   readonly config: Config;
@@ -21,6 +22,7 @@ export class App {
   readonly indexer: Indexer;
   readonly watcher: Watcher;
   readonly graph: InMemoryGraph;
+  readonly contextEnricher: ContextEnricher;
   readonly repoRoot: string;
   repoId: string = '';
   private mcpServer: CodeMcpServer | null = null;
@@ -51,6 +53,7 @@ export class App {
     this.graph = new InMemoryGraph(this.db);
 
     this.repoId = ensureRepo(this.db, this.repoRoot);
+    this.contextEnricher = new ContextEnricher(this.repoId, this.db, this.graph);
   }
 
   async start(): Promise<void> {
