@@ -11,7 +11,7 @@ Hướng dẫn chi tiết từng bước để cài đặt, cấu hình và sử
 3. [Cài đặt MCP server](#3-cài-đặt-mcp-server)
 4. [Cấu hình cho Cline (VS Code)](#4-cấu-hình-cho-cline-vs-code)
 5. [Nạp instruction cho AI (bắt buộc)](#5-nạp-instruction-cho-ai-bắt-buộc)
-6. [Cấu hình cho Claude Code (CLI)](#6-cấu-hình-cho-claude-code-cli)
+6. [Cấu hình cho AI (CLI)](#6-cấu-hình-cho-ai-cli)
 7. [Cấu hình AI explain (tùy chọn)](#7-cấu-hình-ai-explain-tùy-chọn)
 8. [Xác nhận hoạt động](#8-xác-nhận-hoạt-động)
 9. [Cấu hình nhiều repo](#9-cấu-hình-nhiều-repo)
@@ -207,7 +207,7 @@ cp /path/to/mcp-code1/instruction-mcp.md .clinerules
 
 > `.clinerules` được Cline tự động nạp cho project đó. Phù hợp khi muốn rule khác nhau cho từng project.
 
-### Cách C — Claude Code: Memory file
+### Cách C — AI CLI: Memory file
 
 ```bash
 # Thêm vào CLAUDE.md của project
@@ -235,9 +235,9 @@ Hỏi AI: *"Hàm `validateUser` làm gì?"*
 
 ---
 
-## 6. Cấu hình cho Claude Code (CLI)
+## 6. Cấu hình cho AI (CLI)
 
-Thêm vào file `.claude/settings.json` trong project hoặc `~/.claude/settings.json` (global):
+Thêm vào file `.ai/settings.json` trong project hoặc `~/.ai/settings.json` (global):
 
 ```json
 {
@@ -258,7 +258,7 @@ Thêm vào file `.claude/settings.json` trong project hoặc `~/.claude/settings
 Kiểm tra:
 
 ```bash
-claude mcp list
+ai mcp list
 # Phải thấy: code-intelligence — node /path/to/dist/index.js
 ```
 
@@ -297,13 +297,13 @@ ollama pull qwen2.5-coder
 }
 ```
 
-### OpenAI / API tương thích
+### AI / API tương thích
 
 ```json
 "env": {
-  "AI_API_KEY": "sk-your-api-key",
-  "AI_API_BASE_URL": "https://api.openai.com/v1",
-  "AI_MODEL": "gpt-4o-mini"
+  "AI_API_KEY": "your-api-key",
+  "AI_API_BASE_URL": "https://your-ai-provider.com/v1",
+  "AI_MODEL": "your-model-name"
 }
 ```
 
