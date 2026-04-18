@@ -320,3 +320,39 @@ Gọi MCP Prompt `code_explain_codebase` — prompt sẽ tự động gọi các
 4. **AI có thể hallucinate symbol** — tool search xác nhận symbol thực sự tồn tại trong DB với line number chính xác.
 
 **Gọi tool trước. Trả lời sau. Luôn luôn.**
+
+---
+
+## Phần 7 — Xử lý khi tools không available
+
+Server chạy qua HTTP transport — có thể chưa được start khi AI nhận câu hỏi.
+
+### AI phải nhận biết các trường hợp sau
+
+**Khi tools bị lỗi hoặc không phản hồi:**
+
+> ⚠️ **KHÔNG được tự đoán hay trả lời từ kiến thức nội bộ.** Thông báo cho người dùng ngay.
+
+Mẫu phản hồi khi tool lỗi:
+```
+Tool code_search_symbols không phản hồi. Server MCP có thể chưa chạy.
+Vui lòng kiểm tra:
+1. Server đã được start chưa? (node dist/index.js)
+2. MCP panel trong Cline có hiển thị "Connected" không?
+Sau khi server sẵn sàng, hãy hỏi lại câu hỏi này.
+```
+
+**Khi `code_list_repos` trả về danh sách rỗng:**
+
+> Server đang chạy nhưng chưa có repo nào được index.
+
+```
+Chưa có repo nào được index. Hãy dùng tool code_register_repo để thêm repo,
+sau đó code_index_repo để index lần đầu.
+```
+
+### AI KHÔNG được làm
+
+- **KHÔNG** tự trả lời câu hỏi về code khi tool lỗi — dù "chắc chắn biết"
+- **KHÔNG** giả sử server đang chạy mà không verify qua `code_list_repos`
+- **KHÔNG** retry tool quá 2 lần mà không thông báo lỗi cho người dùng
